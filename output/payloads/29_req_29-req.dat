@@ -1,0 +1,13 @@
+--a9e70b7b-2fb0-439d-b22a-deb4d3ee480f
+Content-Disposition: form-data; name="token"
+Content-Transfer-Encoding: binary
+Content-Length: 657
+
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE3ODc4NTA2MzksImV4cCI6MTc5MzAzNDkzOSwidXNyIjp7InVzZXJfaWQiOiI5Njk0NjYwNCIsInVzZXJfdHlwZSI6IkNBUkFNQ08iLCJ1c2VybmFtZSI6ImN2LmF1dG9tYXRpb24udGVzdCthcmdAZ21haWwuY29tIiwiZW1haWwiOiJjdi5hdXRvbWF0aW9uLnRlc3QrYXJnQGdtYWlsLmNvbSIsImZpcnN0bmFtZSI6IkFkbWluaXN0cmFkb3IiLCJsYXN0bmFtZSI6IkFwZWxsaWRvIiwiY291bnRyeV9jb2RlIjoiQVIiLCJyZWdpb24iOiJhcmdlbnRpbmEiLCJhY2NlcHRlZF90ZXJtcyI6MSwiZ2FtaWZpY2F0aW9uX2lkIjoiNjYwNDZiMmU4ZDU3ZjYwNWY1M2Y1OTM2IiwicGFyZW50X2lkIjoiOTY5NDY2MDQiLCJhY2NvdW50IjpudWxsLCJwZ19nYXRld2F5IjoiYW1jb2dhdGUiLCJhZG1pbiI6dHJ1ZSwiQ1ZQIjpmYWxzZSwiTkFWIjoibmV3bmF2In19.AQfBnTJ02V6rSALpu7xw0hyNh3HC0mTp4FKipPr9jnk
+--a9e70b7b-2fb0-439d-b22a-deb4d3ee480f
+Content-Disposition: form-data; name="extra_params"
+Content-Transfer-Encoding: binary
+Content-Length: 1597
+
+{"group_ids":{"1331191":{"format_types":"susc"},"1330421":{"format_types":"susc"},"688392":{"format_types":"susc,briefcase,download"},"598280":{"format_types":"susc,briefcase,download"},"718824":{"format_types":"susc,briefcase,download"},"598282":{"format_types":"susc,briefcase,download"},"1136881":{"format_types":"susc,briefcase,download"},"618745":{"format_types":"susc,briefcase,download"},"696473":{"format_types":"susc,briefcase,download"},"680332":{"format_types":"susc,briefcase,download"},"1136652":{"format_types":"susc,briefcase,download"},"888736":{"format_types":"susc,briefcase,download"},"609607":{"format_types":"susc,briefcase,download"},"1039460":{"format_types":"susc"},"687863":{"format_types":"susc,briefcase,download"},"599126":{"format_types":"susc,briefcase,download"},"608830":{"format_types":"susc,briefcase,download"},"794477":{"format_types":"ppe,download"},"770002":{"format_types":"ppe,download"},"1136813":{"format_types":"ppe,download"},"602221":{"format_types":"susc,briefcase,download"},"717432":{"format_types":"susc,briefcase,download"},"611866":{"format_types":"susc,briefcase,download"},"675162":{"format_types":"susc,briefcase,download"},"543541":{"format_types":"susc,briefcase,download"},"607489":{"format_types":"susc,briefcase,download"},"1123077":{"format_types":"susc"},"1491753":{"format_types":"susc"},"624191":{"format_types":"susc,briefcase,download"},"1501311":{"format_types":"susc"},"1389721":{"format_types":"susc"},"610309":{"format_types":"susc,briefcase,download"},"828898":{"format_types":"susc"},"571486":{"format_types":"ppe,download"}}}
+--a9e70b7b-2fb0-439d-b22a-deb4d3ee480f--

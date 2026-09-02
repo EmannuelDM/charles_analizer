@@ -1,0 +1,2 @@
+analyze
+charles_analizer

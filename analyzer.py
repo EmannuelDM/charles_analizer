@@ -1,0 +1,277 @@
+"""
+Charles Session Analyzer.
+Provides aggregation, filtering, search, and performance reporting.
+"""
+
+from __future__ import annotations
+
+import math
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+try:
+    from .models import CharlesRequest
+    from .parser import CharlesSessionParser
+except ImportError:
+    from models import CharlesRequest
+    from parser import CharlesSessionParser
+
+
+class CharlesAnalyzer:
+    """Analyzer for Charles Proxy sessions."""
+
+    def __init__(self, requests: List[CharlesRequest]):
+        self.requests = requests
+
+    @classmethod
+    def from_file(cls, file_source: Any) -> CharlesAnalyzer:
+        """Load and parse session file or bytes directly into an analyzer instance."""
+        parser = CharlesSessionParser(file_source)
+        requests = parser.parse()
+        return cls(requests)
+
+    def _calc_percentiles(self, values: List[int]) -> Dict[str, float]:
+        """Calculate p50, p90, p95, p99 percentiles."""
+        if not values:
+            return {"p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0}
+
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+
+        def _p(pct: float) -> float:
+            k = (n - 1) * (pct / 100.0)
+            f = math.floor(k)
+            c = math.ceil(k)
+            if f == c:
+                return float(sorted_vals[int(k)])
+            d0 = sorted_vals[int(f)] * (c - k)
+            d1 = sorted_vals[int(c)] * (k - f)
+            return round(d0 + d1, 2)
+
+        return {
+            "p50": _p(50),
+            "p90": _p(90),
+            "p95": _p(95),
+            "p99": _p(99),
+        }
+
+    def summary(self) -> Dict[str, Any]:
+        """Compute comprehensive statistical summary of the session."""
+        if not self.requests:
+            return {
+                "total_requests": 0,
+                "successful_requests": 0,
+                "failed_requests": 0,
+                "total_bytes_sent": 0,
+                "total_bytes_received": 0,
+                "total_bytes": 0,
+                "avg_duration_ms": 0.0,
+                "min_duration_ms": 0,
+                "max_duration_ms": 0,
+                "percentiles_ms": {"p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0},
+                "status_codes": {},
+                "status_categories": {"2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, "ERR": 0},
+                "methods": {},
+                "hosts": {},
+                "content_types": {},
+                "top_endpoints": [],
+            }
+
+        total_requests = len(self.requests)
+        successful_requests = sum(1 for r in self.requests if r.is_success)
+        failed_requests = sum(1 for r in self.requests if r.is_error)
+
+        status_counter = Counter(r.response_status if r.response_status is not None else "No Response" for r in self.requests)
+        category_counter = Counter(r.status_category for r in self.requests)
+        method_counter = Counter(r.method for r in self.requests)
+        host_counter = Counter(r.host for r in self.requests)
+        mime_counter = Counter(r.response_mime_type or "Unknown" for r in self.requests)
+
+        durations = [r.duration_ms for r in self.requests]
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
+        min_duration = min(durations) if durations else 0
+        max_duration = max(durations) if durations else 0
+        percentiles = self._calc_percentiles(durations)
+
+        bytes_sent = sum(r.request_sizes.get("body", 0) or 0 for r in self.requests)
+        bytes_received = sum(r.response_sizes.get("body", 0) or 0 for r in self.requests)
+
+        # Top endpoints breakdown
+        endpoints_data = defaultdict(lambda: {"count": 0, "total_duration": 0, "errors": 0})
+        for r in self.requests:
+            path_base = (r.path or "").split("?")[0]
+            key = f"{r.method or 'GET'} {path_base}"
+            endpoints_data[key]["count"] += 1
+            endpoints_data[key]["total_duration"] += r.duration_ms
+            if r.is_error:
+                endpoints_data[key]["errors"] += 1
+
+        top_endpoints = []
+        for ep, data in endpoints_data.items():
+            top_endpoints.append({
+                "endpoint": ep,
+                "count": data["count"],
+                "avg_duration_ms": round(data["total_duration"] / data["count"], 2),
+                "errors": data["errors"],
+            })
+        top_endpoints.sort(key=lambda x: x["count"], reverse=True)
+
+        return {
+            "total_requests": total_requests,
+            "successful_requests": successful_requests,
+            "failed_requests": failed_requests,
+            "total_bytes_sent": bytes_sent,
+            "total_bytes_received": bytes_received,
+            "total_bytes": bytes_sent + bytes_received,
+            "avg_duration_ms": round(avg_duration, 2),
+            "min_duration_ms": min_duration,
+            "max_duration_ms": max_duration,
+            "percentiles_ms": percentiles,
+            "status_codes": dict(status_counter),
+            "status_categories": dict(category_counter),
+            "methods": dict(method_counter),
+            "hosts": dict(host_counter.most_common(15)),
+            "content_types": dict(mime_counter.most_common(10)),
+            "top_endpoints": top_endpoints[:10],
+        }
+
+    def filter(
+        self,
+        host: Optional[str] = None,
+        status: Optional[Union[int, str]] = None,
+        method: Optional[str] = None,
+        path: Optional[str] = None,
+        min_duration: Optional[int] = None,
+        max_duration: Optional[int] = None,
+        errors_only: bool = False,
+        mime_type: Optional[str] = None,
+        query_param: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        reverse: bool = False,
+    ) -> List[CharlesRequest]:
+        """
+        Filter and sort requests using specified criteria.
+        """
+        results = []
+        for req in self.requests:
+            if errors_only and not req.is_error:
+                continue
+
+            if host and host.lower() not in req.host.lower():
+                continue
+
+            if method and method.upper() != req.method.upper():
+                continue
+
+            if path and path.lower() not in req.path.lower():
+                continue
+
+            if query_param and query_param.lower() not in req.query.lower():
+                continue
+
+            if mime_type and (not req.response_mime_type or mime_type.lower() not in req.response_mime_type.lower()):
+                continue
+
+            if min_duration is not None and req.duration_ms < min_duration:
+                continue
+
+            if max_duration is not None and req.duration_ms > max_duration:
+                continue
+
+            if status is not None:
+                if isinstance(status, int):
+                    if req.response_status != status:
+                        continue
+                elif isinstance(status, str):
+                    s_str = status.lower()
+                    if s_str.endswith("xx") and req.response_status is not None:
+                        prefix = int(s_str[0])
+                        if req.response_status // 100 != prefix:
+                            continue
+                    elif str(req.response_status) != status:
+                        continue
+
+            results.append(req)
+
+        if sort_by:
+            sort_key_map = {
+                "duration": lambda r: r.duration_ms,
+                "size": lambda r: r.total_bytes,
+                "status": lambda r: r.response_status or 0,
+                "id": lambda r: r.id,
+                "host": lambda r: r.host.lower(),
+                "path": lambda r: r.path.lower(),
+            }
+            key_func = sort_key_map.get(sort_by.lower())
+            if key_func:
+                results.sort(key=key_func, reverse=reverse)
+
+        return results
+
+    def search(
+        self,
+        query: str,
+        in_url: bool = True,
+        in_headers: bool = True,
+        in_body: bool = True,
+        case_sensitive: bool = False,
+    ) -> List[CharlesRequest]:
+        """
+        Perform text search across URL, headers, and request/response body.
+        """
+        if not query:
+            return []
+
+        q = query if case_sensitive else query.lower()
+        results = []
+
+        for req in self.requests:
+            matched = False
+
+            # Check URL
+            if in_url:
+                target = req.url if case_sensitive else req.url.lower()
+                if q in target:
+                    matched = True
+
+            # Check Headers
+            if not matched and in_headers:
+                headers_text = " ".join(f"{k}: {v}" for k, v in list(req.request_headers.items()) + list(req.response_headers.items()))
+                target = headers_text if case_sensitive else headers_text.lower()
+                if q in target:
+                    matched = True
+
+            # Check Body
+            if not matched and in_body:
+                req_body = req.get_req_body_text() or ""
+                res_body = req.get_res_body_text() or ""
+                body_text = f"{req_body}\n{res_body}"
+                target = body_text if case_sensitive else body_text.lower()
+                if q in target:
+                    matched = True
+
+            if matched:
+                results.append(req)
+
+        return results
+
+    def get_slowest(self, limit: int = 10) -> List[CharlesRequest]:
+        """Get the N slowest requests sorted by total duration descending."""
+        return sorted(self.requests, key=lambda r: r.duration_ms, reverse=True)[:limit]
+
+    def get_largest(self, limit: int = 10) -> List[CharlesRequest]:
+        """Get the N largest requests sorted by total payload size descending."""
+        return sorted(self.requests, key=lambda r: r.total_bytes, reverse=True)[:limit]
+
+    def get_errors(self) -> List[CharlesRequest]:
+        """Get all failed/error requests (status >= 400 or missing status)."""
+        return [r for r in self.requests if r.is_error]
+
+    def get_request_by_id(self, req_id: int) -> Optional[CharlesRequest]:
+        """Retrieve specific request by ID."""
+        for r in self.requests:
+            if r.id == req_id:
+                return r
+        return None
+

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "charles_analizer"
+version = "0.2.0"
+description = "Python tool to parse, analyze, inspect and export Charles Proxy session files (.chlz)."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "Charles Analyzer Contributor" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Internet :: WWW/HTTP",
+]
+dependencies = []
+
+[project.optional-dependencies]
+extra = ["brotli"]
+
+[project.scripts]
+charles-analizer = "charles_analizer.cli:main"
+charles-web = "charles_analizer.server:main"

@@ -1,0 +1,4 @@
+# Requirements for Charles Proxy Analyzer
+# Core library uses standard Python 3 library only.
+# Optional dependencies:
+brotli>=1.0.9; python_version >= '3.7'
