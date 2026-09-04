@@ -154,23 +154,41 @@ class CharlesAnalyzer:
         Filter and sort requests using specified criteria.
         """
         results = []
+        host_lower = host.lower() if host else None
+        method_upper = method.upper() if method else None
+        path_lower = path.lower() if path else None
+        query_lower = query_param.lower() if query_param else None
+        mime_lower = mime_type.lower() if mime_type else None
+
+        status_prefix = None
+        status_exact = None
+        if status is not None:
+            if isinstance(status, int):
+                status_exact = status
+            elif isinstance(status, str):
+                s_str = status.lower()
+                if s_str.endswith("xx") and s_str[0].isdigit():
+                    status_prefix = int(s_str[0])
+                elif s_str.isdigit():
+                    status_exact = int(s_str)
+
         for req in self.requests:
             if errors_only and not req.is_error:
                 continue
 
-            if host and host.lower() not in req.host.lower():
+            if host_lower and host_lower not in req.host.lower():
                 continue
 
-            if method and method.upper() != req.method.upper():
+            if method_upper and method_upper != req.method.upper():
                 continue
 
-            if path and path.lower() not in req.path.lower():
+            if path_lower and path_lower not in req.path.lower():
                 continue
 
-            if query_param and query_param.lower() not in req.query.lower():
+            if query_lower and query_lower not in req.query.lower():
                 continue
 
-            if mime_type and (not req.response_mime_type or mime_type.lower() not in req.response_mime_type.lower()):
+            if mime_lower and (not req.response_mime_type or mime_lower not in req.response_mime_type.lower()):
                 continue
 
             if min_duration is not None and req.duration_ms < min_duration:
@@ -179,18 +197,12 @@ class CharlesAnalyzer:
             if max_duration is not None and req.duration_ms > max_duration:
                 continue
 
-            if status is not None:
-                if isinstance(status, int):
-                    if req.response_status != status:
-                        continue
-                elif isinstance(status, str):
-                    s_str = status.lower()
-                    if s_str.endswith("xx") and req.response_status is not None:
-                        prefix = int(s_str[0])
-                        if req.response_status // 100 != prefix:
-                            continue
-                    elif str(req.response_status) != status:
-                        continue
+            if status_exact is not None and req.response_status != status_exact:
+                continue
+
+            if status_prefix is not None:
+                if req.response_status is None or req.response_status // 100 != status_prefix:
+                    continue
 
             results.append(req)
 
@@ -246,10 +258,12 @@ class CharlesAnalyzer:
             if not matched and in_body:
                 req_body = req.get_req_body_text() or ""
                 res_body = req.get_res_body_text() or ""
-                body_text = f"{req_body}\n{res_body}"
-                target = body_text if case_sensitive else body_text.lower()
-                if q in target:
-                    matched = True
+                if case_sensitive:
+                    if q in req_body or q in res_body:
+                        matched = True
+                else:
+                    if q in req_body.lower() or q in res_body.lower():
+                        matched = True
 
             if matched:
                 results.append(req)

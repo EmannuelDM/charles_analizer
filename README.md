@@ -1,12 +1,17 @@
 # Charles Proxy File Analyzer (`charles_analizer`) v0.2.0
 
-`charles_analizer` es una herramienta en Python de grado profesional para parsear, analizar, inspeccionar y exportar archivos de sesión de Charles Proxy (`.chlz`).
+`charles_analizer` es una herramienta en Python de grado profesional para parsear, analizar, inspeccionar y exportar archivos de sesión de Charles Proxy (`.chlz`, `.chls`) y HTTP Archive (`.har`).
 
 ---
 
 ## 🌟 Características Principales (v0.2.0)
 
-- **Parseo Inteligente de Archivos `.chlz`**: Descompresión e inspección automática de archivos ZIP (`-meta.json`, `-req.*`, `-res.*`) tanto en la raíz como en subcarpetas del archivo zip. Soporta descompresión transparente de cuerpos codificados con **GZIP**, **Deflate** y **Brotli** (`brotli`).
+- **Soporte Multiformato Nativo (`.chlz`, `.chls`, `.har`)**:
+  - **Archivos ZIP `.chlz`**: Descompresión e inspección automática (`-meta.json`, `-req.*`, `-res.*`) tanto en la raíz como en subcarpetas.
+  - **Sesiones Binarias Java `.chls`**: Decodificación directa de flujos serializados de Java (`0xACED 0005`), extraendo transacciones, encabezados y payloads.
+  - **Sesiones JSON / XML `.chls`**: Auto-detección y parseo de exportaciones estructuradas en JSON o XML.
+  - **Archivos HTTP Archive `.har`**: Decodificación estándar v1.2 de logs HAR con extracción de peticiones, respuestas y timing de red.
+- **Descompresión Transparente**: Soporta cuerpos codificados con **GZIP**, **Deflate** y **Brotli** (`brotli`).
 - **Métricas Avanzadas y Percentiles de Latencia**: Métricas completas de peticiones totales, éxitos (2xx/3xx), fallos (4xx/5xx), transferencia de datos (subida/bajada), tiempos de respuesta (promedio, latencia, min, max, **Percentiles p50, p90, p95 y p99**) y desglose por categorías de estado HTTP (`2xx`, `3xx`, `4xx`, `5xx`, `ERR`).
 - **Filtros Avanzados y Ordenamiento**: Filtrado por host/dominio, código de estado HTTP (p. ej. `200`, `4xx`, `503`), método (`GET`, `POST`), ruta de endpoint (`path`), parámetros de consulta (`query_param`) o solo errores. Soporta ordenamiento por duración, tamaño, estado o ID.
 - **Búsqueda Global en Tiempo Real**: Búsqueda por texto o regex en URLs, encabezados (*headers*) y cuerpos de petición/respuesta (*request/response JSON/text*).
@@ -32,7 +37,7 @@ python3 charles_analizer/analyze.py --web
 ```
 
 Abre tu navegador en `http://localhost:8000`:
-1. Arrastra o selecciona tu archivo `.chlz` (o presiona **⚡ Load example_1.chlz**).
+1. Arrastra o selecciona tu archivo de sesión (`.chlz`, `.chls`, `.har`).
 2. Explora las tarjetas de métricas KPI, percentiles de latencia, distribución de estados y dominios.
 3. Utiliza la vista en árbol (*Tree View*) o el buscador para seleccionar peticiones.
 4. Inspecciona encabezados, edita parámetros y ejecuta peticiones en vivo (**Live Replay**).

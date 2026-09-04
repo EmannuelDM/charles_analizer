@@ -85,13 +85,15 @@ def print_terminal_summary(analyzer: CharlesAnalyzer):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze Charles Proxy session files (.chlz)")
+    parser = argparse.ArgumentParser(
+        description="Analyze Charles Proxy session files (.chlz, .chls) and HTTP Archive files (.har)"
+    )
     parser.add_argument("--web", action="store_true", help="Launch interactive web application server")
     parser.add_argument("--port", type=int, default=8000, help="Port for web server (default: 8000)")
     parser.add_argument(
         "-f", "--file",
         default=None,
-        help="Path to .chlz session file (default: example_1.chlz)"
+        help="Path to session file (.chlz, .chls, .har). Defaults to example_1.chlz"
     )
     parser.add_argument("--summary", action="store_true", help="Print summary statistics")
     parser.add_argument("--json-summary", action="store_true", help="Print summary statistics in JSON format")

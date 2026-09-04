@@ -45,6 +45,13 @@ class CharlesRequest:
 
     raw_meta: Dict[str, Any] = field(default_factory=dict)
 
+    _req_text_cache: Optional[str] = field(default=None, init=False, repr=False)
+    _res_text_cache: Optional[str] = field(default=None, init=False, repr=False)
+    _req_json_parsed: bool = field(default=False, init=False, repr=False)
+    _res_json_parsed: bool = field(default=False, init=False, repr=False)
+    _req_json_cache: Any = field(default=None, init=False, repr=False)
+    _res_json_cache: Any = field(default=None, init=False, repr=False)
+
     @property
     def url(self) -> str:
         """Construct full URL."""
@@ -151,7 +158,7 @@ class CharlesRequest:
                 decompressed = gzip.decompress(raw_bytes)
             except Exception:
                 pass
-        elif "deflate" in encoding:
+        elif "deflate" in encoding or raw_bytes.startswith((b"\x78\x9c", b"\x78\x01", b"\x78\xda")):
             try:
                 decompressed = zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
             except Exception:
@@ -175,34 +182,42 @@ class CharlesRequest:
                 return None
 
     def get_req_body_text(self) -> Optional[str]:
-        """Decode request body as UTF-8 string."""
-        enc = self.get_header("Content-Encoding", response=False)
-        return self._decode_bytes(self.req_body_bytes, enc)
+        """Decode request body as UTF-8 string (cached)."""
+        if self._req_text_cache is None and self.req_body_bytes:
+            enc = self.get_header("Content-Encoding", response=False)
+            self._req_text_cache = self._decode_bytes(self.req_body_bytes, enc)
+        return self._req_text_cache
 
     def get_res_body_text(self) -> Optional[str]:
-        """Decode response body as UTF-8 string."""
-        enc = self.get_header("Content-Encoding", response=True)
-        return self._decode_bytes(self.res_body_bytes, enc)
+        """Decode response body as UTF-8 string (cached)."""
+        if self._res_text_cache is None and self.res_body_bytes:
+            enc = self.get_header("Content-Encoding", response=True)
+            self._res_text_cache = self._decode_bytes(self.res_body_bytes, enc)
+        return self._res_text_cache
 
     def get_req_json(self) -> Any:
-        """Parse request body as JSON."""
-        text = self.get_req_body_text()
-        if text:
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
-        return None
+        """Parse request body as JSON (cached)."""
+        if not self._req_json_parsed:
+            self._req_json_parsed = True
+            text = self.get_req_body_text()
+            if text:
+                try:
+                    self._req_json_cache = json.loads(text)
+                except json.JSONDecodeError:
+                    self._req_json_cache = None
+        return self._req_json_cache
 
     def get_res_json(self) -> Any:
-        """Parse response body as JSON."""
-        text = self.get_res_body_text()
-        if text:
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
-        return None
+        """Parse response body as JSON (cached)."""
+        if not self._res_json_parsed:
+            self._res_json_parsed = True
+            text = self.get_res_body_text()
+            if text:
+                try:
+                    self._res_json_cache = json.loads(text)
+                except json.JSONDecodeError:
+                    self._res_json_cache = None
+        return self._res_json_cache
 
     def to_dict(self, include_bodies: bool = False) -> Dict[str, Any]:
         """Convert request model to dictionary."""
@@ -233,7 +248,9 @@ class CharlesRequest:
             "times": self.times,
         }
         if include_bodies:
-            d["request_body"] = self.get_req_json() or self.get_req_body_text()
-            d["response_body"] = self.get_res_json() or self.get_res_body_text()
+            req_json = self.get_req_json()
+            d["request_body"] = req_json if req_json is not None else self.get_req_body_text()
+            res_json = self.get_res_json()
+            d["response_body"] = res_json if res_json is not None else self.get_res_body_text()
         return d
 

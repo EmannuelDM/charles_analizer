@@ -36,17 +36,17 @@ except ImportError:
 CURRENT_ANALYZER: CharlesAnalyzer = None
 
 
-def get_example_file_path() -> Path:
+def get_example_file_path(filename: str = "example_1.chlz") -> Path:
     candidates = [
-        Path(__file__).parent / "example_1.chlz",
-        Path.cwd() / "example_1.chlz",
-        Path("charles_analizer/example_1.chlz"),
-        Path(__file__).parent / "charles_analizer" / "example_1.chlz",
+        Path(__file__).parent / filename,
+        Path.cwd() / filename,
+        Path("charles_analizer") / filename,
+        Path(__file__).parent / "charles_analizer" / filename,
     ]
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    return Path(__file__).parent / "example_1.chlz"
+    return Path(__file__).parent / filename
 
 
 class CharlesWebHandler(BaseHTTPRequestHandler):
@@ -193,18 +193,26 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         post_data = self.rfile.read(content_length)
 
-        if self.path == "/api/example":
+        if self.path.startswith("/api/example"):
             try:
-                example_path = get_example_file_path()
+                requested_filename = "example_1.chlz"
+                if post_data:
+                    try:
+                        payload = json.loads(post_data.decode("utf-8"))
+                        requested_filename = payload.get("filename", requested_filename)
+                    except Exception:
+                        pass
+                
+                example_path = get_example_file_path(requested_filename)
                 if not example_path.exists():
-                    self._send_json({"error": "Example file example_1.chlz not found"}, status=404)
+                    self._send_json({"error": f"Example file {requested_filename} not found"}, status=404)
                     return
                 CURRENT_ANALYZER = CharlesAnalyzer.from_file(example_path)
                 summary = CURRENT_ANALYZER.summary()
                 requests_data = [r.to_dict(include_bodies=True) for r in CURRENT_ANALYZER.requests]
                 self._send_json({
                     "success": True,
-                    "filename": "example_1.chlz",
+                    "filename": requested_filename,
                     "summary": summary,
                     "requests": requests_data,
                 })
@@ -233,7 +241,7 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                     "requests": requests_data,
                 })
             except Exception as e:
-                self._send_json({"error": f"Failed to parse .chlz file: {str(e)}"}, status=400)
+                self._send_json({"error": f"Failed to parse session file: {str(e)}"}, status=400)
 
         elif self.path == "/api/export/html":
             self._handle_export_html()
@@ -495,6 +503,18 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
+        function formatBodyStr(body, defaultText = 'No Body Content') {
+            if (body === null || body === undefined || body === '') return defaultText;
+            if (typeof body === 'object') return JSON.stringify(body, null, 2);
+            return String(body);
+        }
+
+        function formatBodyTreeHtml(body, defaultText = 'No Body Content') {
+            if (body === null || body === undefined || body === '') return `<div style="color:var(--text-secondary); padding: 8px 0;">${escapeHtml(defaultText)}</div>`;
+            if (typeof body === 'object') return buildJsonTreeHtml(body);
+            return `<div class="json-str">${escapeHtml(body)}</div>`;
+        }
+
         function generateCurlCommand(req) {
             let cmd = `curl -X ${req.method} "${req.url}"`;
             if (req.request_headers) {
@@ -502,7 +522,7 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                     cmd += ` \\\n  -H "${k}: ${String(v).replace(/"/g, '\\"')}"`;
                 }
             }
-            if (req.request_body) {
+            if (req.request_body !== null && req.request_body !== undefined && req.request_body !== '') {
                 let bodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body) : String(req.request_body);
                 cmd += ` \\\n  --data '${bodyStr.replace(/'/g, "'\\''")}'`;
             }
@@ -522,6 +542,42 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             panes.forEach((p, i) => p.classList.toggle('active', i === index));
         }
 
+        function renderQueryParamsTable(queryStr, urlStr) {
+            let pairs = [];
+            let strToParse = queryStr;
+            if (!strToParse && urlStr && urlStr.includes('?')) {
+                strToParse = urlStr.split('?')[1];
+            }
+
+            if (strToParse) {
+                const params = new URLSearchParams(strToParse);
+                for (const [k, v] of params.entries()) {
+                    pairs.push({ key: k, value: v });
+                }
+            }
+
+            if (pairs.length === 0) {
+                return '<div style="color:var(--text-secondary); padding: 14px 0;">No query parameters in this request.</div>';
+            }
+
+            let rows = '';
+            pairs.forEach(p => {
+                rows += `<tr><td style="font-weight:600; color:var(--primary); font-family:'JetBrains Mono',monospace;">${escapeHtml(p.key)}</td><td style="font-family:'JetBrains Mono',monospace; word-break:break-all;">${escapeHtml(p.value)}</td></tr>`;
+            });
+
+            return `
+                <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--card-border); text-align:left;">
+                            <th style="padding:8px; font-size:12px; color:var(--text-secondary);">Parameter Key</th>
+                            <th style="padding:8px; font-size:12px; color:var(--text-secondary);">Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
         function addHeaderRow(key = '', val = '') {
             const container = document.getElementById('headersEditorContainer');
             if (!container) return;
@@ -533,6 +589,55 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                 <button type="button" class="btn btn-secondary" style="padding: 4px 10px;" onclick="this.parentElement.remove()">🗑️</button>
             `;
             container.appendChild(row);
+        }
+
+        function addQueryParamRow(key = '', val = '') {
+            const container = document.getElementById('queryParamsEditorContainer');
+            if (!container) return;
+            const row = document.createElement('div');
+            row.className = 'kv-row qp-row';
+            row.innerHTML = `
+                <input type="text" class="param-input qp-key-input" placeholder="Parameter Key" value="${escapeHtml(key)}" oninput="syncUrlFromQueryParams()">
+                <input type="text" class="param-input qp-val-input" placeholder="Value" value="${escapeHtml(val)}" oninput="syncUrlFromQueryParams()">
+                <button type="button" class="btn btn-secondary" style="padding: 4px 10px;" onclick="this.parentElement.remove(); syncUrlFromQueryParams();">🗑️</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function syncUrlFromQueryParams() {
+            const urlInput = document.getElementById('editUrl');
+            if (!urlInput) return;
+            const currentUrl = urlInput.value;
+            const cleanBase = currentUrl.split('?')[0];
+
+            const keys = document.querySelectorAll('.qp-key-input');
+            const vals = document.querySelectorAll('.qp-val-input');
+            const parts = [];
+            keys.forEach((kEl, idx) => {
+                const k = kEl.value.trim();
+                const v = vals[idx] ? vals[idx].value.trim() : '';
+                if (k) {
+                    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+                }
+            });
+
+            urlInput.value = parts.length > 0 ? cleanBase + '?' + parts.join('&') : cleanBase;
+        }
+
+        function syncQueryParamsFromUrl() {
+            const urlInput = document.getElementById('editUrl');
+            const container = document.getElementById('queryParamsEditorContainer');
+            if (!urlInput || !container) return;
+
+            container.innerHTML = '';
+            const qIdx = urlInput.value.indexOf('?');
+            if (qIdx !== -1) {
+                const qStr = urlInput.value.substring(qIdx + 1);
+                const params = new URLSearchParams(qStr);
+                for (const [k, v] of params.entries()) {
+                    addQueryParamRow(k, v);
+                }
+            }
         }
 
         function doReplayFromFullTab() {
@@ -575,8 +680,8 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                     resBox.innerHTML = `<div style="color: var(--danger); font-weight: 600; padding: 14px;">❌ Request Failed: ${escapeHtml(data.error)}</div>`;
                 } else {
                     let badgeClass = data.status >= 200 && data.status < 400 ? 'badge-2xx' : 'badge-4xx';
-                    let bodyTreeHtml = typeof data.body === 'object' ? buildJsonTreeHtml(data.body) : `<div class="json-str">${escapeHtml(data.body)}</div>`;
-                    let bodyStr = typeof data.body === 'object' ? JSON.stringify(data.body, null, 2) : data.body;
+                    let bodyTreeHtml = formatBodyTreeHtml(data.body, 'No Response Body');
+                    let bodyStr = formatBodyStr(data.body, 'No Response Body');
                     
                     let headersRows = '';
                     if (data.headers) {
@@ -642,9 +747,10 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
 
                 let statusBadgeClass = req.response_status >= 200 && req.response_status < 300 ? 'badge-2xx' : (req.response_status >= 300 && req.response_status < 400 ? 'badge-3xx' : 'badge-4xx');
 
-                let resTreeHtml = typeof req.response_body === 'object' ? buildJsonTreeHtml(req.response_body) : (req.response_body ? `<div class="json-str">${escapeHtml(req.response_body)}</div>` : '<div style="color:var(--text-secondary);">No Response Body</div>');
-                let resBodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body, null, 2) : (req.response_body || 'No Response Body');
-                let reqBodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body, null, 2) : (req.request_body || '');
+                let resTreeHtml = formatBodyTreeHtml(req.response_body, 'No Response Body');
+                let resBodyStr = formatBodyStr(req.response_body, 'No Response Body');
+                let reqBodyStr = formatBodyStr(req.request_body, 'No Request Body');
+                let reqTreeHtml = formatBodyTreeHtml(req.request_body, 'No Request Body');
                 let curlCmd = generateCurlCommand(req);
 
                 let reqHeadersRows = '';
@@ -660,6 +766,8 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                         resHeadersRows += `<tr><td style="font-weight:600; color:var(--primary);">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`;
                     }
                 }
+
+                let reqQueryParamsHtml = renderQueryParamsTable(req.query, req.url);
 
                 const content = document.getElementById('inspectorContent');
                 content.innerHTML = `
@@ -705,11 +813,15 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                         <div class="tab-pane tab-pane-main">
                             <div class="tab-nav">
                                 <button class="tab-btn tab-btn-req active" onclick="switchTab('req', 0)">⚡ cURL Command</button>
-                                <button class="tab-btn tab-btn-req" onclick="switchTab('req', 1)">📋 Request Headers</button>
-                                <button class="tab-btn tab-btn-req" onclick="switchTab('req', 2)">📦 Payload Body</button>
+                                <button class="tab-btn tab-btn-req" onclick="switchTab('req', 1)">❓ Query Parameters</button>
+                                <button class="tab-btn tab-btn-req" onclick="switchTab('req', 2)">📋 Request Headers</button>
+                                <button class="tab-btn tab-btn-req" onclick="switchTab('req', 3)">📦 Payload Body</button>
                             </div>
                             <div class="tab-pane tab-pane-req active">
                                 <div class="code-box">${escapeHtml(curlCmd)}</div>
+                            </div>
+                            <div class="tab-pane tab-pane-req">
+                                ${reqQueryParamsHtml}
                             </div>
                             <div class="tab-pane tab-pane-req">
                                 <table>
@@ -733,13 +845,21 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                                         <option value="PATCH">PATCH</option>
                                         <option value="OPTIONS">OPTIONS</option>
                                     </select>
-                                    <input type="text" id="editUrl" class="param-input" value="${escapeHtml(req.url)}" placeholder="Target URL">
+                                    <input type="text" id="editUrl" class="param-input" value="${escapeHtml(req.url)}" placeholder="Target URL" oninput="syncQueryParamsFromUrl()">
                                     <button class="btn btn-primary" onclick="doReplayFromFullTab()">🔄 Do request</button>
                                 </div>
 
                                 <div>
                                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                                        <strong style="font-size:13px; color:var(--primary);">Request Headers</strong>
+                                        <strong style="font-size:13px; color:var(--primary);">Query Parameters Editor</strong>
+                                        <button class="btn btn-secondary" style="padding:4px 10px; font-size:11px;" onclick="addQueryParamRow()">+ Add Query Param</button>
+                                    </div>
+                                    <div id="queryParamsEditorContainer"></div>
+                                </div>
+
+                                <div>
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                        <strong style="font-size:13px; color:var(--primary);">Request Headers Editor</strong>
                                         <button class="btn btn-secondary" style="padding:4px 10px; font-size:11px;" onclick="addHeaderRow()">+ Add Header</button>
                                     </div>
                                     <div id="headersEditorContainer"></div>
@@ -755,6 +875,20 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                 `;
 
                 document.getElementById('editMethod').value = req.method;
+
+                // Populate Query Parameters Editor
+                const qIdx = req.url ? req.url.indexOf('?') : -1;
+                if (qIdx !== -1) {
+                    const params = new URLSearchParams(req.url.substring(qIdx + 1));
+                    for (const [k, v] of params.entries()) {
+                        addQueryParamRow(k, v);
+                    }
+                } else if (req.query) {
+                    const params = new URLSearchParams(req.query);
+                    for (const [k, v] of params.entries()) {
+                        addQueryParamRow(k, v);
+                    }
+                }
 
                 if (req.request_headers) {
                     for (const [k, v] of Object.entries(req.request_headers)) {
@@ -1290,9 +1424,8 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                 <p>Interactive Session Inspector & Debugger</p>
             </div>
         </div>
-        <div class="action-bar">
-            <button class="btn btn-outline" onclick="document.getElementById('fileInput').click()">📁 Attach .chlz File</button>
-            <button class="btn btn-primary" onclick="loadExampleData()">⚡ Load example_1.chlz</button>
+        <div class="action-bar" style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">📁 Open File (.chlz, .chls, .har)</button>
         </div>
     </header>
 
@@ -1300,10 +1433,10 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
     <div class="upload-section" id="dropZone" onclick="document.getElementById('fileInput').click()">
         <div class="upload-icon">📁</div>
         <div style="text-align: left;">
-            <div class="upload-title">Drop your Charles session file (.chlz) here</div>
-            <div class="upload-desc">or click to browse files from your computer</div>
+            <div class="upload-title">Drop your session or HAR file (.chlz, .chls, .har) here</div>
+            <div class="upload-desc">Supports Charles ZIP (.chlz), Java Binary / JSON / XML (.chls), and HTTP Archive (.har)</div>
         </div>
-        <input type="file" id="fileInput" class="file-input" accept=".chlz">
+        <input type="file" id="fileInput" class="file-input" accept=".chlz,.chls,.har,.chlsj,.json,.xml,*/*">
     </div>
 
     <!-- Main Content Dashboard -->
@@ -1471,12 +1604,12 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             const reader = new FileReader();
             reader.onload = function(e) {
                 const base64Data = e.target.result.split(',')[1];
-                uploadChlzFile(file.name, base64Data);
+                uploadSessionFile(file.name, base64Data);
             };
             reader.readAsDataURL(file);
         }
 
-        function uploadChlzFile(filename, fileB64) {
+        function uploadSessionFile(filename, fileB64) {
             fetch('/api/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1494,15 +1627,19 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             .catch(err => alert('Upload failed: ' + err.message));
         }
 
-        function loadExampleData() {
-            fetch('/api/example', { method: 'POST' })
+        function loadExampleData(filename = 'example_1.chlz') {
+            fetch('/api/example', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: filename })
+            })
             .then(res => res.json())
             .then(data => {
                 if (data.error) {
                     alert('Error: ' + data.error);
                 } else {
                     loadSessionData(data);
-                    showToast('Loaded example_1.chlz!');
+                    showToast('Loaded ' + filename + '!');
                 }
             })
             .catch(err => alert('Failed to load example file: ' + err.message));
@@ -1681,6 +1818,64 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             });
         }
 
+        function countNodeTotalRequests(node) {
+            let count = node.requests ? node.requests.length : 0;
+            if (node.folders) {
+                for (const subFolder of Object.values(node.folders)) {
+                    count += countNodeTotalRequests(subFolder);
+                }
+            }
+            return count;
+        }
+
+        function renderTreeNodeHTML(node, isHost = false) {
+            const totalCount = countNodeTotalRequests(node);
+            const icon = isHost ? '🌐' : '📁';
+            const nodeName = node.name;
+
+            let html = `
+                <div class="tree-folder">
+                    <div class="tree-folder-header" onclick="toggleTreeFolder(this)">
+                        <span class="json-toggle">▼</span>
+                        <span style="font-size:15px;">${icon}</span>
+                        <span class="tree-folder-title">${escapeHtml(nodeName)}</span>
+                        <span class="badge badge-method" style="margin-left:auto;">${totalCount} req${totalCount === 1 ? '' : 's'}</span>
+                    </div>
+                    <div class="tree-node-children">
+            `;
+
+            // Render sub-folders sorted alphabetically
+            const folderKeys = Object.keys(node.folders || {}).sort();
+            folderKeys.forEach(k => {
+                html += renderTreeNodeHTML(node.folders[k], false);
+            });
+
+            // Render request leaves at this directory level
+            if (node.requests && node.requests.length > 0) {
+                node.requests.forEach(req => {
+                    let badgeClass = req.response_status >= 200 && req.response_status < 300 ? 'badge-2xx' : (req.response_status >= 300 && req.response_status < 400 ? 'badge-3xx' : 'badge-4xx');
+                    const reqPathLabel = req.query ? `${req.path}?${req.query}` : req.path;
+
+                    html += `
+                        <div class="tree-leaf" onclick="openInspector(${req.id})">
+                            <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                                <span class="badge badge-method">${req.method}</span>
+                                <span class="badge ${badgeClass}">${req.response_status || 'ERR'}</span>
+                                <span style="font-weight:600; color:var(--text); word-break:break-all;">${escapeHtml(reqPathLabel)}</span>
+                            </div>
+                            <div style="display:flex; gap:12px; align-items:center; font-size:11px; color:var(--text-secondary);">
+                                <span>#${req.id}</span>
+                                <span>${req.duration_ms || 0} ms</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            html += `</div></div>`;
+            return html;
+        }
+
         function renderStructureView() {
             const container = document.getElementById('structureTreeContent');
             container.innerHTML = '';
@@ -1690,49 +1885,60 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                 return;
             }
 
-            // Build Host -> Path Directory Tree
+            // Build hierarchical Host -> Directory Tree
             const tree = {};
 
             activeRequestsList.forEach(req => {
                 const host = req.host || 'other-hosts';
-                if (!tree[host]) tree[host] = [];
-                tree[host].push(req);
+                if (!tree[host]) {
+                    tree[host] = { name: host, isHost: true, folders: {}, requests: [] };
+                }
+
+                const rawPath = req.path || '/';
+                const segments = rawPath.split('/').filter(Boolean);
+
+                let currentNode = tree[host];
+                // Navigate/build directory folders for all path segments except last one
+                for (let i = 0; i < segments.length - 1; i++) {
+                    const seg = segments[i];
+                    if (!currentNode.folders[seg]) {
+                        currentNode.folders[seg] = { name: seg + '/', isHost: false, folders: {}, requests: [] };
+                    }
+                    currentNode = currentNode.folders[seg];
+                }
+
+                currentNode.requests.push(req);
             });
 
-            let html = '';
-            for (const [host, reqs] of Object.entries(tree)) {
-                html += `
-                    <div class="tree-folder">
-                        <div class="tree-folder-header" onclick="toggleTreeFolder(this)">
-                            <span class="json-toggle">▼</span>
-                            <span style="font-size:16px;">🌐</span>
-                            <span class="tree-folder-title">${escapeHtml(host)}</span>
-                            <span class="badge badge-method" style="margin-left:auto;">${reqs.length} requests</span>
-                        </div>
-                        <div class="tree-node-children">
-                `;
+            let html = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--card-border);">
+                    <div style="font-weight:700; color:var(--text); font-size:15px; display:flex; align-items:center; gap:8px;">
+                        <span>🌳 Session Directory Tree</span>
+                        <span class="badge badge-method">${Object.keys(tree).length} Hosts</span>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="expandAllStructureTree()">▼ Expand All</button>
+                        <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="collapseAllStructureTree()">▶ Collapse All</button>
+                    </div>
+                </div>
+            `;
 
-                reqs.forEach(req => {
-                    let badgeClass = req.response_status >= 200 && req.response_status < 300 ? 'badge-2xx' : (req.response_status >= 300 && req.response_status < 400 ? 'badge-3xx' : 'badge-4xx');
-                    html += `
-                        <div class="tree-leaf" onclick="openInspector(${req.id})">
-                            <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
-                                <span class="badge badge-method">${req.method}</span>
-                                <span class="badge ${badgeClass}">${req.response_status}</span>
-                                <span style="font-weight:600; color:var(--text); word-break:break-all;">${escapeHtml(req.path)}</span>
-                            </div>
-                            <div style="display:flex; gap:12px; align-items:center; font-size:11px; color:var(--text-secondary);">
-                                <span>#${req.id}</span>
-                                <span>${req.duration_ms} ms</span>
-                            </div>
-                        </div>
-                    `;
-                });
-
-                html += `</div></div>`;
-            }
+            const hostKeys = Object.keys(tree).sort();
+            hostKeys.forEach(hostName => {
+                html += renderTreeNodeHTML(tree[hostName], true);
+            });
 
             container.innerHTML = html;
+        }
+
+        function expandAllStructureTree() {
+            document.querySelectorAll('#structureTreeContent .tree-node-children').forEach(el => el.style.display = 'block');
+            document.querySelectorAll('#structureTreeContent .json-toggle').forEach(el => el.innerText = '▼');
+        }
+
+        function collapseAllStructureTree() {
+            document.querySelectorAll('#structureTreeContent .tree-node-children').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('#structureTreeContent .json-toggle').forEach(el => el.innerText = '▶');
         }
 
         function toggleTreeFolder(headerEl) {
@@ -1772,6 +1978,44 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             window.open('/inspector.html?id=' + reqId, '_blank');
         }
 
+        function renderQueryParamsTable(queryStr, urlStr) {
+            let pairs = [];
+            let strToParse = queryStr;
+            if (!strToParse && urlStr && urlStr.includes('?')) {
+                strToParse = urlStr.split('?')[1];
+            }
+
+            if (strToParse) {
+                try {
+                    const params = new URLSearchParams(strToParse);
+                    for (const [k, v] of params.entries()) {
+                        pairs.push({ key: k, value: v });
+                    }
+                } catch(e) {}
+            }
+
+            if (pairs.length === 0) {
+                return '<div style="color:var(--text-secondary); padding: 14px 0;">No query parameters in this request.</div>';
+            }
+
+            let rows = '';
+            pairs.forEach(p => {
+                rows += `<tr><td style="font-weight:600; color:var(--primary); font-family:'JetBrains Mono',monospace;">${escapeHtml(p.key)}</td><td style="font-family:'JetBrains Mono',monospace; word-break:break-all;">${escapeHtml(p.value)}</td></tr>`;
+            });
+
+            return `
+                <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--card-border); text-align:left;">
+                            <th style="padding:8px; font-size:12px; color:var(--text-secondary);">Parameter Key</th>
+                            <th style="padding:8px; font-size:12px; color:var(--text-secondary);">Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
         function addModalHeaderRow(key = '', val = '') {
             const container = document.getElementById('modalHeadersEditorContainer');
             if (!container) return;
@@ -1783,6 +2027,55 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                 <button type="button" class="btn btn-secondary" style="padding: 4px 10px;" onclick="this.parentElement.remove()">🗑️</button>
             `;
             container.appendChild(row);
+        }
+
+        function addModalQueryParamRow(key = '', val = '') {
+            const container = document.getElementById('modalQueryParamsEditorContainer');
+            if (!container) return;
+            const row = document.createElement('div');
+            row.className = 'kv-row m-qp-row';
+            row.innerHTML = `
+                <input type="text" class="param-input m-qp-key" placeholder="Parameter Key" value="${escapeHtml(key)}" oninput="syncModalUrlFromQueryParams()">
+                <input type="text" class="param-input m-qp-val" placeholder="Value" value="${escapeHtml(val)}" oninput="syncModalUrlFromQueryParams()">
+                <button type="button" class="btn btn-secondary" style="padding: 4px 10px;" onclick="this.parentElement.remove(); syncModalUrlFromQueryParams();">🗑️</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function syncModalUrlFromQueryParams() {
+            const urlInput = document.getElementById('modalEditUrl');
+            if (!urlInput) return;
+            const currentUrl = urlInput.value;
+            const cleanBase = currentUrl.split('?')[0];
+
+            const keys = document.querySelectorAll('.m-qp-key');
+            const vals = document.querySelectorAll('.m-qp-val');
+            const parts = [];
+            keys.forEach((kEl, idx) => {
+                const k = kEl.value.trim();
+                const v = vals[idx] ? vals[idx].value.trim() : '';
+                if (k) {
+                    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+                }
+            });
+
+            urlInput.value = parts.length > 0 ? cleanBase + '?' + parts.join('&') : cleanBase;
+        }
+
+        function syncModalQueryParamsFromUrl() {
+            const urlInput = document.getElementById('modalEditUrl');
+            const container = document.getElementById('modalQueryParamsEditorContainer');
+            if (!urlInput || !container) return;
+
+            container.innerHTML = '';
+            const qIdx = urlInput.value.indexOf('?');
+            if (qIdx !== -1) {
+                const qStr = urlInput.value.substring(qIdx + 1);
+                const params = new URLSearchParams(qStr);
+                for (const [k, v] of params.entries()) {
+                    addModalQueryParamRow(k, v);
+                }
+            }
         }
 
         function executeModalDoRequest(reqId) {
@@ -1822,8 +2115,8 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                     box.innerHTML = `<div style="color: var(--danger); font-weight: 600; padding: 12px;">❌ Replay Failed: ${escapeHtml(data.error)}</div>`;
                 } else {
                     let badgeClass = data.status >= 200 && data.status < 400 ? 'badge-2xx' : 'badge-4xx';
-                    let bodyStr = typeof data.body === 'object' ? JSON.stringify(data.body, null, 2) : data.body;
-                    let treeHtml = typeof data.body === 'object' ? buildJsonTreeHtml(data.body) : `<div class="json-str">${escapeHtml(data.body)}</div>`;
+                    let bodyStr = formatBodyStr(data.body, 'No Response Body');
+                    let treeHtml = formatBodyTreeHtml(data.body, 'No Response Body');
                     let headersHtml = renderHeadersTable(data.headers);
 
                     box.innerHTML = `
@@ -1870,13 +2163,14 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             document.getElementById('modalTitle').innerText = `#${req.id} ${req.method} ${req.url}`;
             const modalBody = document.getElementById('modalBody');
 
-            let reqBodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body, null, 2) : (req.request_body || '');
-            let resBodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body, null, 2) : (req.response_body || 'No Response Body');
+            let reqBodyStr = formatBodyStr(req.request_body, 'No Request Body');
+            let resBodyStr = formatBodyStr(req.response_body, 'No Response Body');
             let curlCmd = generateCurlCommand(req);
 
-            let resTreeHtml = typeof req.response_body === 'object' ? buildJsonTreeHtml(req.response_body) : (req.response_body ? `<div class="json-str">${escapeHtml(req.response_body)}</div>` : '<div style="color:var(--text-secondary);">No Response Body</div>');
-            let reqTreeHtml = typeof req.request_body === 'object' ? buildJsonTreeHtml(req.request_body) : (req.request_body ? `<div class="json-str">${escapeHtml(req.request_body)}</div>` : '<div style="color:var(--text-secondary);">No Request Body</div>');
+            let resTreeHtml = formatBodyTreeHtml(req.response_body, 'No Response Body');
+            let reqTreeHtml = formatBodyTreeHtml(req.request_body, 'No Request Body');
 
+            let reqQueryParamsHtml = renderQueryParamsTable(req.query, req.url);
             let resHeadersHtml = renderHeadersTable(req.response_headers);
             let reqHeadersHtml = renderHeadersTable(req.request_headers);
 
@@ -1932,13 +2226,18 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
 
                     <div class="tab-nav">
                         <button class="tab-btn tab-btn-req active" onclick="switchTab('req', 0)">⚡ cURL Command</button>
-                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 1)">📋 Request Headers</button>
-                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 2)">📦 Payload Body</button>
-                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 3)">✏️ Edit & Do Request</button>
+                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 1)">❓ Query Parameters</button>
+                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 2)">📋 Request Headers</button>
+                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 3)">📦 Payload Body</button>
+                        <button class="tab-btn tab-btn-req" onclick="switchTab('req', 4)">✏️ Edit & Do Request</button>
                     </div>
 
                     <div class="tab-pane tab-pane-req active">
                         <div class="code-box">${escapeHtml(curlCmd)}</div>
+                    </div>
+
+                    <div class="tab-pane tab-pane-req">
+                        ${reqQueryParamsHtml}
                     </div>
 
                     <div class="tab-pane tab-pane-req">
@@ -1960,8 +2259,16 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                                     <option value="PATCH">PATCH</option>
                                     <option value="OPTIONS">OPTIONS</option>
                                 </select>
-                                <input type="text" id="modalEditUrl" class="param-input" value="${escapeHtml(req.url)}" placeholder="Target URL">
+                                <input type="text" id="modalEditUrl" class="param-input" value="${escapeHtml(req.url)}" placeholder="Target URL" oninput="syncModalQueryParamsFromUrl()">
                                 <button class="btn btn-primary" onclick="executeModalDoRequest(${req.id})">🔄 Do request</button>
+                            </div>
+
+                            <div>
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                    <strong style="font-size:12px; color:var(--primary);">Query Parameters Editor</strong>
+                                    <button class="btn btn-secondary" style="padding:3px 8px; font-size:11px;" onclick="addModalQueryParamRow()">+ Add Query Param</button>
+                                </div>
+                                <div id="modalQueryParamsEditorContainer"></div>
                             </div>
 
                             <div>
@@ -1982,6 +2289,21 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             `;
 
             document.getElementById('modalEditMethod').value = req.method;
+
+            // Populate Modal Query Parameters Editor
+            const qIdx = req.url ? req.url.indexOf('?') : -1;
+            if (qIdx !== -1) {
+                const params = new URLSearchParams(req.url.substring(qIdx + 1));
+                for (const [k, v] of params.entries()) {
+                    addModalQueryParamRow(k, v);
+                }
+            } else if (req.query) {
+                const params = new URLSearchParams(req.query);
+                for (const [k, v] of params.entries()) {
+                    addModalQueryParamRow(k, v);
+                }
+            }
+
             if (req.request_headers) {
                 for (const [k, v] of Object.entries(req.request_headers)) {
                     addModalHeaderRow(k, String(v));
@@ -2005,10 +2327,12 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
         }
 
         function buildJsonTreeHtml(obj) {
+            if (obj === undefined) return '<span class="json-null">undefined</span>';
             if (obj === null) return '<span class="json-null">null</span>';
             if (typeof obj === 'number') return `<span class="json-num">${obj}</span>`;
             if (typeof obj === 'boolean') return `<span class="json-bool">${obj}</span>`;
             if (typeof obj === 'string') return `<span class="json-str">"${escapeHtml(obj)}"</span>`;
+            if (typeof obj !== 'object') return `<span class="json-str">${escapeHtml(String(obj))}</span>`;
 
             const isArray = Array.isArray(obj);
             const keys = Object.keys(obj);
@@ -2076,14 +2400,20 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
 
         function copyResponseBody(reqId) {
             const req = currentSessionData.requests.find(r => r.id === reqId);
-            if (!req || !req.response_body) return;
+            if (!req || req.response_body === null || req.response_body === undefined || req.response_body === '') {
+                showToast('No response body to copy');
+                return;
+            }
             let bodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body, null, 2) : String(req.response_body);
             navigator.clipboard.writeText(bodyStr).then(() => showToast('Copied response body to clipboard! 📋'));
         }
 
         function downloadResponseBody(reqId) {
             const req = currentSessionData.requests.find(r => r.id === reqId);
-            if (!req || !req.response_body) return;
+            if (!req || req.response_body === null || req.response_body === undefined || req.response_body === '') {
+                showToast('No response body to download');
+                return;
+            }
             let bodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body, null, 2) : String(req.response_body);
             const blob = new Blob([bodyStr], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -2113,6 +2443,18 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
+        function formatBodyStr(body, defaultText = 'No Body Content') {
+            if (body === null || body === undefined || body === '') return defaultText;
+            if (typeof body === 'object') return JSON.stringify(body, null, 2);
+            return String(body);
+        }
+
+        function formatBodyTreeHtml(body, defaultText = 'No Body Content') {
+            if (body === null || body === undefined || body === '') return `<div style="color:var(--text-secondary); padding: 8px 0;">${escapeHtml(defaultText)}</div>`;
+            if (typeof body === 'object') return buildJsonTreeHtml(body);
+            return `<div class="json-str">${escapeHtml(body)}</div>`;
+        }
+
         window.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') closeModal();
         });
@@ -2121,9 +2463,16 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             if (e.target === this) closeModal();
         });
 
-        // Load default example file on startup
+        // Check if session data is already available on server startup
         window.onload = function() {
-            loadExampleData();
+            fetch('/api/summary')
+                .then(res => res.json())
+                .then(data => {
+                    if (data && !data.error && data.summary && data.summary.total_requests > 0) {
+                        loadSessionData(data);
+                    }
+                })
+                .catch(() => {});
         };
     </script>
 </body>

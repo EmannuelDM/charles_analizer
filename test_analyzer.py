@@ -60,6 +60,26 @@ class TestCharlesAnalyzer(unittest.TestCase):
         self.assertIsNotNone(first.url)
         self.assertIn("mobile-collector.newrelic.com", first.host)
 
+    def test_parser_chls(self):
+        chls_file = Path(__file__).parent / "example_0.chls"
+        if chls_file.exists():
+            analyzer = CharlesAnalyzer.from_file(chls_file)
+            summary = analyzer.summary()
+            self.assertEqual(summary["total_requests"], 255)
+            self.assertEqual(summary["failed_requests"], 1)
+
+            # Verify body parsing from Java binary format
+            with_res_body = [r for r in analyzer.requests if r.to_dict(include_bodies=True).get("response_body") is not None]
+            self.assertGreater(len(with_res_body), 200, "Should successfully decode response bodies from .chls binary file")
+
+    def test_parser_har(self):
+        har_file = Path(__file__).parent / "example_2.har"
+        if har_file.exists():
+            analyzer = CharlesAnalyzer.from_file(har_file)
+            summary = analyzer.summary()
+            self.assertEqual(summary["total_requests"], 34)
+            self.assertEqual(summary["successful_requests"], 34)
+
     def test_analyzer_summary(self):
         analyzer = CharlesAnalyzer.from_file(self.example_chlz)
         summary = analyzer.summary()
@@ -154,6 +174,22 @@ class TestCharlesAnalyzer(unittest.TestCase):
             payload_dir = CharlesExporter.export_payloads(analyzer.requests, tmp_path / "payloads")
             self.assertTrue(Path(payload_dir).exists())
             self.assertTrue((Path(payload_dir) / "manifest.json").exists())
+
+    def test_body_caching(self):
+        req = CharlesRequest(
+            id=100,
+            req_body_bytes=b'{"key": "value"}',
+            res_body_bytes=b'{"status": "ok"}',
+        )
+        self.assertIsNone(req._req_text_cache)
+        text = req.get_req_body_text()
+        self.assertEqual(text, '{"key": "value"}')
+        self.assertEqual(req._req_text_cache, '{"key": "value"}')
+
+        json_data = req.get_req_json()
+        self.assertEqual(json_data, {"key": "value"})
+        self.assertTrue(req._req_json_parsed)
+        self.assertEqual(req._req_json_cache, {"key": "value"})
 
 
 if __name__ == "__main__":

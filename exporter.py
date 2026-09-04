@@ -120,8 +120,20 @@ class CharlesExporter:
             item = r.to_dict(include_bodies=True)
             reqs_json_list.append(item)
 
-        json_data_str = json.dumps(reqs_json_list, ensure_ascii=False)
-        summary_json_str = json.dumps(summary_data, ensure_ascii=False)
+        json_data_str = (
+            json.dumps(reqs_json_list, ensure_ascii=False)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
+        )
+        summary_json_str = (
+            json.dumps(summary_data, ensure_ascii=False)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
+        )
 
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -324,6 +336,18 @@ class CharlesExporter:
 
         document.getElementById('searchInput').addEventListener('input', applyFilters);
 
+        function formatBodyStr(body, defaultText = 'No Body Content') {{
+            if (body === null || body === undefined || body === '') return defaultText;
+            if (typeof body === 'object') return JSON.stringify(body, null, 2);
+            return String(body);
+        }}
+
+        function formatBodyTreeHtml(body, defaultText = 'No Body Content') {{
+            if (body === null || body === undefined || body === '') return `<div style="color:var(--text-muted); padding: 6px 0;">${{defaultText}}</div>`;
+            if (typeof body === 'object') return buildJsonTreeHtml(body);
+            return `<div class="json-str">${{body}}</div>`;
+        }}
+
         function generateCurlCommand(req) {{
             let cmd = `curl -X ${{req.method}} "${{req.url}}"`;
             if (req.request_headers) {{
@@ -331,9 +355,9 @@ class CharlesExporter:
                     cmd += ` \\\n  -H "${{k}}: ${{String(v).replace(/"/g, '\\"')}}"`;
                 }}
             }}
-            if (req.request_body) {{
+            if (req.request_body !== null && req.request_body !== undefined && req.request_body !== '') {{
                 let bodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body) : String(req.request_body);
-                cmd += ` \\\n  --data '${{bodyStr.replace(/'/g, "'\\''")}}';
+                cmd += ` \\\n  --data '${{bodyStr.replace(/'/g, "'\\''")}}'`;
             }}
             return cmd;
         }}
@@ -570,11 +594,11 @@ class CharlesExporter:
             document.getElementById('modalTitle').innerText = `#${{req.id}} - ${{req.method}} ${{req.url}}`;
             const curlCmd = generateCurlCommand(req);
 
-            let reqBodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body, null, 2) : (req.request_body || 'No Request Body');
-            let resBodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body, null, 2) : (req.response_body || 'No Response Body');
+            let reqBodyStr = formatBodyStr(req.request_body, 'No Request Body');
+            let resBodyStr = formatBodyStr(req.response_body, 'No Response Body');
 
-            let resTreeHtml = typeof req.response_body === 'object' ? buildJsonTreeHtml(req.response_body) : (req.response_body ? `<div class="json-str">${{req.response_body}}</div>` : '<div style="color:var(--text-muted);">No Response Body</div>');
-            let reqTreeHtml = typeof req.request_body === 'object' ? buildJsonTreeHtml(req.request_body) : (req.request_body ? `<div class="json-str">${{req.request_body}}</div>` : '<div style="color:var(--text-muted);">No Request Body</div>');
+            let resTreeHtml = formatBodyTreeHtml(req.response_body, 'No Response Body');
+            let reqTreeHtml = formatBodyTreeHtml(req.request_body, 'No Request Body');
 
             let resHeadersHtml = renderHeadersTable(req.response_headers);
             let reqHeadersHtml = renderHeadersTable(req.request_headers);
