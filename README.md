@@ -1,162 +1,119 @@
 # Charles Proxy File Analyzer (`charles_analizer`) v0.2.0
 
-`charles_analizer` es una herramienta en Python de grado profesional para parsear, analizar, inspeccionar y exportar archivos de sesión de Charles Proxy (`.chlz`, `.chls`) y HTTP Archive (`.har`).
+Herramienta interactiva y visual para parsear, analizar, filtrar e inspeccionar sesiones de **Charles Proxy** (`.chlz`, `.chls`) y archivos **HTTP Archive** (`.har`). Incluye una aplicación web interactiva (SPA) con vistas Structure y Sequence, motor de búsqueda con **expresiones regulares (Regex)**, badges de coincidencias en vivo, inspector JSON y *Live Request Replay*.
 
 ---
 
-## 🌟 Características Principales (v0.2.0)
+## ⚡ Inicio Rápido
 
-- **Soporte Multiformato Nativo (`.chlz`, `.chls`, `.har`)**:
-  - **Archivos ZIP `.chlz`**: Descompresión e inspección automática (`-meta.json`, `-req.*`, `-res.*`) tanto en la raíz como en subcarpetas.
-  - **Sesiones Binarias Java `.chls`**: Decodificación directa de flujos serializados de Java (`0xACED 0005`), extraendo transacciones, encabezados y payloads.
-  - **Sesiones JSON / XML `.chls`**: Auto-detección y parseo de exportaciones estructuradas en JSON o XML.
-  - **Archivos HTTP Archive `.har`**: Decodificación estándar v1.2 de logs HAR con extracción de peticiones, respuestas y timing de red.
-- **Descompresión Transparente**: Soporta cuerpos codificados con **GZIP**, **Deflate** y **Brotli** (`brotli`).
-- **Métricas Avanzadas y Percentiles de Latencia**: Métricas completas de peticiones totales, éxitos (2xx/3xx), fallos (4xx/5xx), transferencia de datos (subida/bajada), tiempos de respuesta (promedio, latencia, min, max, **Percentiles p50, p90, p95 y p99**) y desglose por categorías de estado HTTP (`2xx`, `3xx`, `4xx`, `5xx`, `ERR`).
-- **Filtros Avanzados y Ordenamiento**: Filtrado por host/dominio, código de estado HTTP (p. ej. `200`, `4xx`, `503`), método (`GET`, `POST`), ruta de endpoint (`path`), parámetros de consulta (`query_param`) o solo errores. Soporta ordenamiento por duración, tamaño, estado o ID.
-- **Búsqueda Global en Tiempo Real**: Búsqueda por texto o regex en URLs, encabezados (*headers*) y cuerpos de petición/respuesta (*request/response JSON/text*).
-- **Inspección Detallada por ID**: Inspección profunda de encabezados y cuerpo codificado/JSON de cualquier petición por su número de ID con búsqueda insensible a mayúsculas/minúsculas en encabezados (`get_header()`).
-- **Exportación Flexible**:
-  - **JSON / CSV**: Exportación de datos estructurados y tablas con soporte para tamaño formateado (`formatted_size`) y categoría de estado.
-  - **Manifiesto de Payloads (`manifest.json`)**: Volcado de cargas útiles con generación de archivo de índice `manifest.json` en el directorio de salida.
-  - **HTML Interactivo (Glassmorphic Report)**: Reporte visual autónomo e interactivo con estética moderna, tarjetas de percentiles, tabla buscable, generador cURL e inspector JSON.
-  - **Aplicación Web Interactiva (SPA)**: Servidor Web con soporte **CORS**, visualización en árbol de estructura por dominios y endpoints, inspector con pestañas completas y editor de parámetros para **Replay de peticiones en vivo**.
-
----
-
-## 🌐 Aplicación Web (Servidor Web)
-
-Puedes iniciar la aplicación web ejecutando cualquiera de los siguientes comandos:
+La forma más rápida y recomendada de iniciar la aplicación web es mediante el script ejecutable:
 
 ```bash
-# Iniciar servidor web e interactuar desde el navegador web (puerto 8000)
-python3 charles_analizer/server.py
-
-# O bien mediante la bandera --web
-python3 charles_analizer/analyze.py --web
+# Prepara el entorno virtual (.venv), verifica dependencias y abre el navegador:
+./run_web.sh
 ```
 
-Abre tu navegador en `http://localhost:8000`:
-1. Arrastra o selecciona tu archivo de sesión (`.chlz`, `.chls`, `.har`).
-2. Explora las tarjetas de métricas KPI, percentiles de latencia, distribución de estados y dominios.
-3. Utiliza la vista en árbol (*Tree View*) o el buscador para seleccionar peticiones.
-4. Inspecciona encabezados, edita parámetros y ejecuta peticiones en vivo (**Live Replay**).
-5. Haz clic en **📄 Generate HTML Report** para descargar un informe HTML interactivo e independiente.
+> **Tip**: También dispones del alias `./start.sh`.
 
 ---
 
-## 📁 Estructura del Módulo
+## 🌐 Aplicación Web Interactiva (Web SPA)
+
+### Opciones de Ejecución
+
+```bash
+# 1. Iniciar con puerto por defecto (8000) y abrir navegador automáticamente
+./run_web.sh
+
+# 2. Iniciar precargando directamente un archivo de sesión
+./run_web.sh sesion.chlz
+./run_web.sh sesion.har -p 8080
+
+# 3. Especificar un puerto personalizado
+./run_web.sh --port 8080
+./run_web.sh -p 9000
+
+# 4. Iniciar sin abrir automáticamente el navegador
+./run_web.sh --no-browser
+
+# 5. Forzar reinstalación de dependencias
+./run_web.sh --reinstall
+
+# 6. Ejecutar directamente con Python
+python3 server.py --port 8000
+python3 server.py sesion.chlz
+```
+
+### Funcionalidades de la Interfaz Web
+
+Abre tu navegador en `http://localhost:8000`:
+
+1. **Cargar sesión**: Arrastra o selecciona cualquier archivo de sesión (`.chlz`, `.chls`, `.har`). También puedes precargar un archivo indicándolo en el comando (`./run_web.sh archivo.chlz`).
+2. **Explorar métricas y KPIs**:
+   - Tarjetas de resumen: total de peticiones, ratio de éxito/fallo y volumen transferido.
+   - Percentiles de latencia en milisegundos (**p50, p90, p95, p99**).
+   - Gráficos interactivos de distribución de códigos de estado HTTP y principales dominios.
+3. **Navegación Dual**:
+   - **📂 Structure View**: Navega las peticiones agrupadas en carpetas jerárquicas por protocolo, dominio y rutas de endpoints.
+   - **📋 Sequence View**: Tabla interactiva plana con ordenamiento multicriterio (ID, método, estado, host, duración y tamaño).
+4. **Búsqueda Avanzada y Expresiones Regulares**:
+   - Escribe en el buscador para filtrar en URLs, métodos, códigos de estado, cabeceras y cuerpos de petición/respuesta.
+   - Haz clic en **`.* Regex`** para habilitar expresiones regulares (ej. `(api|v1)\/users\/\d+`, `^40[0-9]$`).
+   - Badges contextuales visuales (`🎯 URL`, `🎯 Headers`, `🎯 Body`) con fragmentos de contexto y coincidencias resaltadas.
+5. **Inspector Modal & Live Replay**:
+   - Haz clic en cualquier petición para abrir el inspector modal.
+   - Examina cabeceras formateadas y el árbol JSON colapsable con buscador en línea integrado.
+   - Genera y copia con 1 clic el comando `curl` listo para terminal.
+   - Modifica métodos, cabeceras, URL o cuerpo y presiona **Replay Request** para probar el endpoint en vivo.
+6. **Descarga de Reportes**:
+   - **📄 Download HTML Report**: Genera un reporte autónomo Glassmorphic de un solo archivo.
+   - **Export JSON**: Volcado estructurado con todos los datos y payloads decodificados.
+   - **Export CSV**: Formato tabular para análisis en hojas de cálculo.
+
+---
+
+## 📦 Instalación Manual
+
+Si prefieres instalar las dependencias manualmente en tu entorno global o virtual:
+
+### Requisitos
+- **Python 3.8 o superior**
+
+```bash
+# 1. Instalar dependencias requeridas (descompresión Brotli)
+pip install -r requirements.txt
+
+# 2. (Opcional) Instalar en modo editable para habilitar comandos de consola globales
+pip install -e .
+```
+
+Comandos de consola disponibles tras la instalación:
+- `charles-web`: Servidor de la aplicación web interactiva (`charles-web --port 8000`).
+- `charles-analizer`: Interfaz CLI por consola (`charles-analizer --help`).
+
+---
+
+## 📁 Estructura del Proyecto
 
 ```
 charles_analizer/
-├── example_1.chlz        # Archivo de ejemplo de sesión Charles Proxy
-├── __init__.py           # Exportaciones principales del paquete (v0.2.0)
-├── models.py             # Modelo de datos CharlesRequest con helpers de categoría y tamaño
-├── parser.py             # Lógica de descompresión y lectura de .chlz (CharlesSessionParser)
-├── analyzer.py           # Métricas, percentiles, búsquedas, filtros y ordenamiento (CharlesAnalyzer)
-├── exporter.py           # Exportadores a JSON, CSV, Reporte HTML y Payloads con manifiesto (CharlesExporter)
-├── cli.py                # Interfaz de Línea de Comandos (CLI) con colores ANSI y percentiles
-├── analyze.py            # Script ejecutable principal
-├── server.py             # Servidor Web SPA con CORS, Replay y vistas interactivas
-├── test_analyzer.py      # Suite de pruebas unitarias e integración
+├── run_web.sh            # Script de inicio rápido (prepara venv, instala dependencias y lanza web)
+├── start.sh              # Enlace directo al script de lanzamiento
+├── server.py             # Servidor Web SPA (Structure Tree, Sequence View, Inspector y Replay)
+├── models.py             # Modelo CharlesRequest con helpers de estado, decodificación y tamaño
+├── parser.py             # Parser multiformato (.chlz ZIP, .chls Java/JSON/XML, .har 1.2)
+├── analyzer.py           # Agregación de métricas, percentiles, filtrado y motor de búsqueda Regex
+├── exporter.py           # Exportadores a HTML interactivo, JSON y CSV
+├── cli.py                # Interfaz de Línea de Comandos
+├── analyze.py            # Script ejecutable de entrada CLI
+├── pyproject.toml        # Metadatos del paquete y definición de comandos de consola
+├── setup.py              # Configuración de instalación estándar setuptools
+├── requirements.txt      # Dependencias del proyecto (brotli)
 └── README.md             # Documentación del proyecto
 ```
 
 ---
 
-## 🚀 Uso en Línea de Comandos (CLI)
+## 📄 Licencia
 
-### 1. Ver Resumen Estadístico en Terminal (con Percentiles y Colores ANSI)
-
-```bash
-python3 charles_analizer/analyze.py --summary
-```
-
-### 2. Obtener Resumen Estadístico en Formato JSON
-
-```bash
-python3 charles_analizer/analyze.py --json-summary
-```
-
-### 3. Filtrar por Dominio, Ruta y Ordenar por Duración Descendente
-
-```bash
-python3 charles_analizer/analyze.py --host clarovideo.net --sort-by duration --reverse
-```
-
-### 4. Filtrar por Parámetro de Consulta
-
-```bash
-python3 charles_analizer/analyze.py --query-param "profile=1"
-```
-
-### 5. Ver Solo Errores (4xx / 5xx)
-
-```bash
-python3 charles_analizer/analyze.py --errors-only
-```
-
-### 6. Buscar Términos en Peticiones y Cuerpos
-
-```bash
-python3 charles_analizer/analyze.py --search "already_with_susc"
-```
-
-### 7. Inspeccionar Detalladamente una Petición por ID
-
-```bash
-python3 charles_analizer/analyze.py --inspect-id 32
-```
-
-### 8. Exportar Resultados Completo (JSON, CSV, Reporte HTML y Payloads con Manifiesto)
-
-```bash
-python3 charles_analizer/analyze.py \
-  --export-json output/session.json \
-  --export-csv output/session.csv \
-  --export-html output/report.html \
-  --export-payloads output/payloads
-```
-
----
-
-## 🐍 Uso desde Código Python
-
-```python
-from charles_analizer import CharlesAnalyzer, CharlesExporter
-
-# 1. Cargar archivo .chlz
-analyzer = CharlesAnalyzer.from_file("charles_analizer/example_1.chlz")
-
-# 2. Obtener métricas principales y percentiles
-summary = analyzer.summary()
-print(f"Total peticiones: {summary['total_requests']}")
-print(f"Peticiones con error: {summary['failed_requests']}")
-print(f"Percentiles latencia: p50={summary['percentiles_ms']['p50']}ms, p95={summary['percentiles_ms']['p95']}ms")
-
-# 3. Filtrar y ordenar peticiones
-peticiones_lentas = analyzer.filter(sort_by="duration", reverse=True)
-for req in peticiones_lentas[:5]:
-    print(f"Petición #{req.id} [{req.status_category}] ({req.formatted_size}): {req.duration_ms}ms -> {req.url}")
-
-# 4. Obtener encabezados de manera insensible a mayúsculas
-first_req = analyzer.requests[0]
-content_type = first_req.get_header("Content-Type", response=True)
-print(f"Content-Type de respuesta: {content_type}")
-
-# 5. Exportar reporte HTML interactivo
-CharlesExporter.to_html_report(summary, analyzer.requests, "reporte.html")
-```
-
----
-
-## 🧪 Pruebas Unitarias
-
-Ejecuta el suite de pruebas para verificar el correcto funcionamiento de todas las características:
-
-```bash
-pytest
-# O mediante unittest:
-python3 -m unittest charles_analizer/test_analyzer.py
-```
-
+Este proyecto está bajo la Licencia **MIT**.

@@ -1,3 +1,0 @@
-[console_scripts]
-charles-analizer = charles_analizer.cli:main
-charles-web = charles_analizer.server:main

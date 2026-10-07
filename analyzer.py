@@ -6,6 +6,7 @@ Provides aggregation, filtering, search, and performance reporting.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -228,12 +229,21 @@ class CharlesAnalyzer:
         in_headers: bool = True,
         in_body: bool = True,
         case_sensitive: bool = False,
+        use_regex: bool = False,
     ) -> List[CharlesRequest]:
         """
-        Perform text search across URL, headers, and request/response body.
+        Perform text or regex search across URL, method, status, headers, and request/response body.
         """
         if not query:
             return []
+
+        pattern = None
+        if use_regex:
+            try:
+                flags = 0 if case_sensitive else re.IGNORECASE
+                pattern = re.compile(query, flags)
+            except re.error:
+                return []
 
         q = query if case_sensitive else query.lower()
         results = []
@@ -241,29 +251,58 @@ class CharlesAnalyzer:
         for req in self.requests:
             matched = False
 
-            # Check URL
+            # Check URL / Method / Status / Host / Path
             if in_url:
-                target = req.url if case_sensitive else req.url.lower()
-                if q in target:
-                    matched = True
+                url_str = req.url or ""
+                method_str = req.method or ""
+                status_str = str(req.response_status) if req.response_status is not None else ""
+                status_text = req.status_text or ""
+                host_str = req.host or ""
+                path_str = req.path or ""
+
+                if pattern:
+                    if (
+                        pattern.search(url_str)
+                        or pattern.search(method_str)
+                        or pattern.search(status_str)
+                        or pattern.search(status_text)
+                        or pattern.search(host_str)
+                        or pattern.search(path_str)
+                    ):
+                        matched = True
+                else:
+                    targets = [url_str, method_str, status_str, status_text, host_str, path_str]
+                    if not case_sensitive:
+                        targets = [t.lower() for t in targets]
+                    if any(q in t for t in targets):
+                        matched = True
 
             # Check Headers
             if not matched and in_headers:
-                headers_text = " ".join(f"{k}: {v}" for k, v in list(req.request_headers.items()) + list(req.response_headers.items()))
-                target = headers_text if case_sensitive else headers_text.lower()
-                if q in target:
-                    matched = True
+                headers_items = list(req.request_headers.items()) + list(req.response_headers.items())
+                headers_text = " ".join(f"{k}: {v}" for k, v in headers_items)
+                if pattern:
+                    if pattern.search(headers_text):
+                        matched = True
+                else:
+                    target = headers_text if case_sensitive else headers_text.lower()
+                    if q in target:
+                        matched = True
 
             # Check Body
             if not matched and in_body:
                 req_body = req.get_req_body_text() or ""
                 res_body = req.get_res_body_text() or ""
-                if case_sensitive:
-                    if q in req_body or q in res_body:
+                if pattern:
+                    if pattern.search(req_body) or pattern.search(res_body):
                         matched = True
                 else:
-                    if q in req_body.lower() or q in res_body.lower():
-                        matched = True
+                    if case_sensitive:
+                        if q in req_body or q in res_body:
+                            matched = True
+                    else:
+                        if q in req_body.lower() or q in res_body.lower():
+                            matched = True
 
             if matched:
                 results.append(req)

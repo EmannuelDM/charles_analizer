@@ -241,7 +241,8 @@ class CharlesExporter:
     </div>
 
     <div class="controls">
-        <input type="text" id="searchInput" class="search-box" placeholder="Search URL, method, status, host or body content...">
+        <input type="text" id="searchInput" class="search-box" placeholder="Search URL, method, status, headers, body...">
+        <button class="filter-btn" id="btnRegexToggle" onclick="toggleRegexMode()" style="font-family: monospace;" title="Toggle Regular Expression Search">.* Regex</button>
         <button class="filter-btn active" onclick="filterStatus('all')">All</button>
         <button class="filter-btn" onclick="filterStatus('2xx')">2xx OK</button>
         <button class="filter-btn" onclick="filterStatus('errors')">Errors / 4xx / 5xx</button>
@@ -278,6 +279,20 @@ class CharlesExporter:
     <script>
         const requestsData = {json_data_str};
         let currentFilter = 'all';
+        let isRegexMode = false;
+
+        function toggleRegexMode() {{
+            isRegexMode = !isRegexMode;
+            const btn = document.getElementById('btnRegexToggle');
+            if (btn) {{
+                if (isRegexMode) {{
+                    btn.classList.add('active');
+                }} else {{
+                    btn.classList.remove('active');
+                }}
+            }}
+            applyFilters();
+        }}
 
         function renderTable(data) {{
             const tbody = document.getElementById('requestTableBody');
@@ -308,27 +323,78 @@ class CharlesExporter:
 
         function filterStatus(type) {{
             currentFilter = type;
-            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.filter-btn').forEach(btn => {{
+                if (btn.id !== 'btnRegexToggle') btn.classList.remove('active');
+            }});
             event.target.classList.add('active');
             applyFilters();
         }}
 
         function applyFilters() {{
-            const query = document.getElementById('searchInput').value.toLowerCase();
+            const rawVal = document.getElementById('searchInput').value;
+            const query = isRegexMode ? rawVal.trim() : rawVal.toLowerCase().trim();
+            const searchInputEl = document.getElementById('searchInput');
+
+            let searchRegex = null;
+            let isRegexValid = true;
+            if (query) {{
+                if (isRegexMode) {{
+                    try {{
+                        searchRegex = new RegExp(query, 'i');
+                        if (searchInputEl) searchInputEl.style.borderColor = 'var(--card-border)';
+                    }} catch (e) {{
+                        isRegexValid = false;
+                        if (searchInputEl) searchInputEl.style.borderColor = 'var(--danger-color)';
+                    }}
+                }} else {{
+                    if (searchInputEl) searchInputEl.style.borderColor = 'var(--card-border)';
+                }}
+            }} else {{
+                if (searchInputEl) searchInputEl.style.borderColor = 'var(--card-border)';
+            }}
+
             const filtered = requestsData.filter(req => {{
                 let matchesStatus = true;
                 if (currentFilter === '2xx') matchesStatus = req.response_status >= 200 && req.response_status < 300;
                 if (currentFilter === 'errors') matchesStatus = req.is_error || (req.response_status && req.response_status >= 400);
 
-                const fullUrl = req.url.toLowerCase();
-                const host = req.host.toLowerCase();
-                const path = req.path.toLowerCase();
-                const reqBody = typeof req.request_body === 'string' ? req.request_body.toLowerCase() : JSON.stringify(req.request_body || '').toLowerCase();
-                const resBody = typeof req.response_body === 'string' ? req.response_body.toLowerCase() : JSON.stringify(req.response_body || '').toLowerCase();
+                if (!matchesStatus) return false;
 
-                const matchesQuery = !query || fullUrl.includes(query) || host.includes(query) || path.includes(query) || reqBody.includes(query) || resBody.includes(query);
+                if (!query) return true;
 
-                return matchesStatus && matchesQuery;
+                if (isRegexMode && !isRegexValid) return false;
+
+                const urlStr = req.url || '';
+                const methodStr = req.method || '';
+                const hostStr = req.host || '';
+                const pathStr = req.path || '';
+                const queryStr = req.query || '';
+                const statusStr = req.response_status !== null && req.response_status !== undefined ? String(req.response_status) : '';
+                const statusText = req.status_text || '';
+
+                let reqHeadersStr = '';
+                if (req.request_headers) {{
+                    for (const [k, v] of Object.entries(req.request_headers)) {{
+                        reqHeadersStr += `${{k}}: ${{v}} `;
+                    }}
+                }}
+                let resHeadersStr = '';
+                if (req.response_headers) {{
+                    for (const [k, v] of Object.entries(req.response_headers)) {{
+                        resHeadersStr += `${{k}}: ${{v}} `;
+                    }}
+                }}
+
+                let reqBodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body) : String(req.request_body || '');
+                let resBodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body) : String(req.response_body || '');
+
+                const targets = [urlStr, methodStr, hostStr, pathStr, queryStr, statusStr, statusText, reqHeadersStr, resHeadersStr, reqBodyStr, resBodyStr];
+
+                if (searchRegex) {{
+                    return targets.some(t => t && searchRegex.test(t));
+                }} else {{
+                    return targets.some(t => t && t.toLowerCase().includes(query));
+                }}
             }});
 
             renderTable(filtered);

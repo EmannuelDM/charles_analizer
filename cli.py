@@ -103,7 +103,8 @@ def main():
     parser.add_argument("--path", help="Filter by path substring")
     parser.add_argument("--query-param", help="Filter by query parameter substring")
     parser.add_argument("--errors-only", action="store_true", help="Show only failed/error requests")
-    parser.add_argument("--search", help="Search text across URL, headers, and body")
+    parser.add_argument("--search", help="Search text across URL, method, status, headers, and body")
+    parser.add_argument("--regex", action="store_true", help="Treat search query as regular expression")
     parser.add_argument("--sort-by", choices=["duration", "size", "status", "id", "host", "path"], help="Sort filtered requests")
     parser.add_argument("--reverse", action="store_true", help="Reverse sort direction")
     parser.add_argument("--inspect-id", type=int, help="Inspect detailed request and response payload for a specific request ID")
@@ -120,6 +121,12 @@ def main():
         except ImportError:
             from server import start_server
         start_server(port=args.port, open_browser=True)
+        return
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        print("\n💡 Tip: Para iniciar la aplicación web interactiva, ejecuta:")
+        print("   ./run_web.sh  o  python3 server.py")
         return
 
     file_path = None
@@ -166,8 +173,9 @@ def main():
         print(f"Filtered {len(filtered_requests)} / {len(analyzer.requests)} requests.")
 
     if args.search:
-        filtered_requests = analyzer.search(args.search)
-        print(f"Found {len(filtered_requests)} requests matching search query '{args.search}'.")
+        filtered_requests = CharlesAnalyzer(filtered_requests).search(args.search, use_regex=args.regex)
+        mode_str = "regex pattern" if args.regex else "search query"
+        print(f"Found {len(filtered_requests)} requests matching {mode_str} '{args.search}'.")
 
     # If inspect ID requested
     if args.inspect_id is not None:

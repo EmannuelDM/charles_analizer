@@ -161,7 +161,13 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             if not CURRENT_ANALYZER:
                 self._send_json({"error": "No session loaded"}, status=400)
             else:
-                self._send_json({"success": True, "summary": CURRENT_ANALYZER.summary()})
+                requests_data = [r.to_dict(include_bodies=True) for r in CURRENT_ANALYZER.requests]
+                self._send_json({
+                    "success": True,
+                    "filename": getattr(CURRENT_ANALYZER, "filename", "session.chlz"),
+                    "summary": CURRENT_ANALYZER.summary(),
+                    "requests": requests_data,
+                })
         elif path == "/api/export/html":
             self._handle_export_html()
         elif path == "/api/export/json":
@@ -1411,6 +1417,47 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             display: none;
             z-index: 200;
         }
+        .search-match-container {
+            margin-top: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .search-match-item {
+            font-size: 11px;
+            background: rgba(56, 189, 248, 0.08);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 6px;
+            padding: 4px 8px;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .match-location-badge {
+            background: rgba(251, 191, 36, 0.2);
+            color: #fbbf24;
+            border: 1px solid rgba(251, 191, 36, 0.4);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+        .match-snippet-text {
+            color: #cbd5e1;
+            word-break: break-all;
+        }
+        mark.search-highlight {
+            background: rgba(251, 191, 36, 0.4);
+            color: #fff;
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-weight: 700;
+            box-shadow: 0 0 4px rgba(251, 191, 36, 0.5);
+        }
     </style>
 </head>
 <body>
@@ -1502,8 +1549,8 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                 <div style="display: flex; gap: 8px; align-items: center;">
                     <span style="font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-right: 4px;">View Mode:</span>
-                    <button class="btn btn-primary" id="btnViewSequence" onclick="switchMainView('sequence')">📋 Sequence View</button>
-                    <button class="btn btn-secondary" id="btnViewStructure" onclick="switchMainView('structure')">📂 Structure View</button>
+                    <button class="btn btn-secondary" id="btnViewSequence" onclick="switchMainView('sequence')">📋 Sequence View</button>
+                    <button class="btn btn-primary" id="btnViewStructure" onclick="switchMainView('structure')">📂 Structure View</button>
                 </div>
                 
                 <div style="display: flex; gap: 6px; flex-wrap: wrap;">
@@ -1516,12 +1563,13 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             </div>
 
             <div class="controls-row">
-                <input type="text" class="search-input" id="tableSearch" placeholder="🔍 Search by URL, host, path, status, or keyword..." oninput="onSearchInput()">
+                <input type="text" class="search-input" id="tableSearch" placeholder="🔍 Search across URL, method, status, headers, body..." oninput="onSearchInput()">
+                <button class="btn btn-secondary" id="btnRegexToggle" onclick="toggleRegexMode()" style="font-family: 'JetBrains Mono', monospace;" title="Toggle Regular Expression Search">.* Regex</button>
             </div>
         </div>
 
         <!-- Sequence View (Flat Table) -->
-        <div class="table-wrapper" id="sequenceViewBox">
+        <div class="table-wrapper hidden" id="sequenceViewBox">
             <table>
                 <thead>
                     <tr>
@@ -1539,7 +1587,7 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
         </div>
 
         <!-- Structure View (Grouped Folders) -->
-        <div class="structure-container hidden" id="structureViewBox">
+        <div class="structure-container" id="structureViewBox">
             <div id="structureTreeContent"></div>
         </div>
 
@@ -1563,9 +1611,10 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
         let activeRequestsList = [];
         let currentStatusFilter = 'all';
         let currentSearchQuery = '';
+        let isRegexMode = false;
         let sortField = 'id';
         let sortAsc = true;
-        let currentMainView = 'sequence';
+        let currentMainView = 'structure';
         let currentModalReqId = null;
 
         // Initialize drag & drop and file input
@@ -1658,7 +1707,7 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
 
             renderKPIs(data.summary);
             renderCharts(data.summary);
-            applyFiltersAndRender();
+            switchMainView('structure');
         }
 
         function renderKPIs(s) {
@@ -1729,13 +1778,135 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             applyFiltersAndRender();
         }
 
-        function onSearchInput() {
-            currentSearchQuery = document.getElementById('tableSearch').value.toLowerCase().trim();
+        function toggleRegexMode() {
+            isRegexMode = !isRegexMode;
+            const btn = document.getElementById('btnRegexToggle');
+            if (btn) {
+                if (isRegexMode) {
+                    btn.className = 'btn btn-primary';
+                } else {
+                    btn.className = 'btn btn-secondary';
+                }
+            }
             applyFiltersAndRender();
+        }
+
+        function onSearchInput() {
+            const rawVal = document.getElementById('tableSearch').value;
+            currentSearchQuery = isRegexMode ? rawVal.trim() : rawVal.toLowerCase().trim();
+            applyFiltersAndRender();
+        }
+
+        function findMatchLocations(req) {
+            if (!currentSearchQuery) return [];
+            const matches = [];
+
+            function getSnippet(fullStr, matchIndex, matchLen) {
+                const start = Math.max(0, matchIndex - 25);
+                const end = Math.min(fullStr.length, matchIndex + matchLen + 35);
+                let prefix = start > 0 ? '...' : '';
+                let suffix = end < fullStr.length ? '...' : '';
+
+                const before = fullStr.substring(start, matchIndex);
+                const matchText = fullStr.substring(matchIndex, matchIndex + matchLen);
+                const after = fullStr.substring(matchIndex + matchLen, end);
+
+                return `${prefix}${escapeHtml(before)}<mark class="search-highlight">${escapeHtml(matchText)}</mark>${escapeHtml(after)}${suffix}`;
+            }
+
+            function checkTarget(targetStr, label) {
+                if (!targetStr) return;
+                const str = String(targetStr);
+                if (isRegexMode) {
+                    try {
+                        const regex = new RegExp(currentSearchQuery, 'gi');
+                        let m;
+                        let foundCount = 0;
+                        while ((m = regex.exec(str)) !== null) {
+                            matches.push({ label, snippet: getSnippet(str, m.index, m[0].length) });
+                            foundCount++;
+                            if (foundCount >= 2 || m[0].length === 0) break;
+                        }
+                    } catch(e) {}
+                } else {
+                    const lowerTarget = str.toLowerCase();
+                    const lowerQ = currentSearchQuery.toLowerCase();
+                    let startPos = 0;
+                    let foundCount = 0;
+                    while (startPos < lowerTarget.length) {
+                        const idx = lowerTarget.indexOf(lowerQ, startPos);
+                        if (idx === -1) break;
+                        matches.push({ label, snippet: getSnippet(str, idx, currentSearchQuery.length) });
+                        foundCount++;
+                        if (foundCount >= 2) break;
+                        startPos = idx + lowerQ.length;
+                    }
+                }
+            }
+
+            // 1. URL
+            checkTarget(req.url, 'URL');
+
+            // 2. Method
+            checkTarget(req.method, 'Method');
+
+            // 3. Status Code
+            if (req.response_status) {
+                const statusCombined = `${req.response_status} ${req.status_text || ''}`.trim();
+                checkTarget(statusCombined, 'Status Code');
+            }
+
+            // 4. Request Headers
+            if (req.request_headers) {
+                for (const [k, v] of Object.entries(req.request_headers)) {
+                    checkTarget(`${k}: ${v}`, `Request Header [${k}]`);
+                }
+            }
+
+            // 5. Response Headers
+            if (req.response_headers) {
+                for (const [k, v] of Object.entries(req.response_headers)) {
+                    checkTarget(`${k}: ${v}`, `Response Header [${k}]`);
+                }
+            }
+
+            // 6. Request Body
+            if (req.request_body !== null && req.request_body !== undefined && req.request_body !== '') {
+                const reqBodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body, null, 2) : String(req.request_body);
+                checkTarget(reqBodyStr, 'Request Body');
+            }
+
+            // 7. Response Body
+            if (req.response_body !== null && req.response_body !== undefined && req.response_body !== '') {
+                const resBodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body, null, 2) : String(req.response_body);
+                checkTarget(resBodyStr, 'Response Body');
+            }
+
+            return matches;
         }
 
         function applyFiltersAndRender() {
             if (!currentSessionData) return;
+
+            let searchRegex = null;
+            let isRegexValid = true;
+            const searchInputEl = document.getElementById('tableSearch');
+
+            if (currentSearchQuery) {
+                if (isRegexMode) {
+                    try {
+                        searchRegex = new RegExp(currentSearchQuery, 'i');
+                        if (searchInputEl) searchInputEl.style.borderColor = 'var(--card-border)';
+                    } catch (e) {
+                        isRegexValid = false;
+                        if (searchInputEl) searchInputEl.style.borderColor = 'var(--danger)';
+                    }
+                } else {
+                    if (searchInputEl) searchInputEl.style.borderColor = 'var(--card-border)';
+                }
+            } else {
+                if (searchInputEl) searchInputEl.style.borderColor = 'var(--card-border)';
+            }
 
             activeRequestsList = currentSessionData.requests.filter(req => {
                 // Status Filter
@@ -1744,13 +1915,42 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                 if (currentStatusFilter === '4xx' && (req.response_status < 400 || req.response_status >= 500)) return false;
                 if (currentStatusFilter === '5xx' && req.response_status < 500) return false;
 
-                // Search Query
+                // Search Query across all request fields (URL, method, status, headers, body)
                 if (currentSearchQuery) {
-                    const matchUrl = req.url && req.url.toLowerCase().includes(currentSearchQuery);
-                    const matchHost = req.host && req.host.toLowerCase().includes(currentSearchQuery);
-                    const matchPath = req.path && req.path.toLowerCase().includes(currentSearchQuery);
-                    const matchStatus = String(req.response_status).includes(currentSearchQuery);
-                    return matchUrl || matchHost || matchPath || matchStatus;
+                    if (isRegexMode && !isRegexValid) return false;
+
+                    const urlStr = req.url || '';
+                    const methodStr = req.method || '';
+                    const hostStr = req.host || '';
+                    const pathStr = req.path || '';
+                    const queryStr = req.query || '';
+                    const statusStr = req.response_status !== null && req.response_status !== undefined ? String(req.response_status) : '';
+                    const statusText = req.status_text || '';
+
+                    let reqHeadersStr = '';
+                    if (req.request_headers) {
+                        for (const [k, v] of Object.entries(req.request_headers)) {
+                            reqHeadersStr += `${k}: ${v} `;
+                        }
+                    }
+                    let resHeadersStr = '';
+                    if (req.response_headers) {
+                        for (const [k, v] of Object.entries(req.response_headers)) {
+                            resHeadersStr += `${k}: ${v} `;
+                        }
+                    }
+
+                    let reqBodyStr = typeof req.request_body === 'object' ? JSON.stringify(req.request_body) : String(req.request_body || '');
+                    let resBodyStr = typeof req.response_body === 'object' ? JSON.stringify(req.response_body) : String(req.response_body || '');
+
+                    const targets = [urlStr, methodStr, hostStr, pathStr, queryStr, statusStr, statusText, reqHeadersStr, resHeadersStr, reqBodyStr, resBodyStr];
+
+                    if (searchRegex) {
+                        return targets.some(t => t && searchRegex.test(t));
+                    } else {
+                        const q = currentSearchQuery.toLowerCase();
+                        return targets.some(t => t && t.toLowerCase().includes(q));
+                    }
                 }
 
                 return true;
@@ -1805,12 +2005,33 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
 
                 const kbSize = (req.total_bytes / 1024).toFixed(1) + ' KB';
 
+                let matchHtml = '';
+                if (currentSearchQuery) {
+                    const matches = findMatchLocations(req);
+                    if (matches.length > 0) {
+                        matchHtml = `
+                            <div class="search-match-container">
+                                ${matches.slice(0, 3).map(m => `
+                                    <div class="search-match-item">
+                                        <span class="match-location-badge">🎯 ${escapeHtml(m.label)}</span>
+                                        <span class="match-snippet-text">${m.snippet}</span>
+                                    </div>
+                                `).join('')}
+                                ${matches.length > 3 ? `<div style="font-size:10px; color:var(--text-secondary);">+ ${matches.length - 3} more coincidence locations</div>` : ''}
+                            </div>
+                        `;
+                    }
+                }
+
                 tr.innerHTML = `
                     <td style="font-weight: 700; color: var(--primary);">${req.id}</td>
                     <td><span class="badge badge-method">${req.method}</span></td>
                     <td><span class="badge ${badgeClass}">${req.response_status || 'ERR'}</span></td>
                     <td>${escapeHtml(req.host)}</td>
-                    <td>${escapeHtml(req.path)}</td>
+                    <td>
+                        <div>${escapeHtml(req.path)}</div>
+                        ${matchHtml}
+                    </td>
                     <td>${req.duration_ms} ms</td>
                     <td>${kbSize}</td>
                 `;
@@ -1856,17 +2077,37 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                     let badgeClass = req.response_status >= 200 && req.response_status < 300 ? 'badge-2xx' : (req.response_status >= 300 && req.response_status < 400 ? 'badge-3xx' : 'badge-4xx');
                     const reqPathLabel = req.query ? `${req.path}?${req.query}` : req.path;
 
+                    let matchHtml = '';
+                    if (currentSearchQuery) {
+                        const matches = findMatchLocations(req);
+                        if (matches.length > 0) {
+                            matchHtml = `
+                                <div class="search-match-container">
+                                    ${matches.slice(0, 3).map(m => `
+                                        <div class="search-match-item">
+                                            <span class="match-location-badge">🎯 ${escapeHtml(m.label)}</span>
+                                            <span class="match-snippet-text">${m.snippet}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `;
+                        }
+                    }
+
                     html += `
                         <div class="tree-leaf" onclick="openInspector(${req.id})">
-                            <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
-                                <span class="badge badge-method">${req.method}</span>
-                                <span class="badge ${badgeClass}">${req.response_status || 'ERR'}</span>
-                                <span style="font-weight:600; color:var(--text); word-break:break-all;">${escapeHtml(reqPathLabel)}</span>
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                                <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+                                    <span class="badge badge-method">${req.method}</span>
+                                    <span class="badge ${badgeClass}">${req.response_status || 'ERR'}</span>
+                                    <span style="font-weight:600; color:var(--text); word-break:break-all;">${escapeHtml(reqPathLabel)}</span>
+                                </div>
+                                <div style="display:flex; gap:12px; align-items:center; font-size:11px; color:var(--text-secondary);">
+                                    <span>#${req.id}</span>
+                                    <span>${req.duration_ms || 0} ms</span>
+                                </div>
                             </div>
-                            <div style="display:flex; gap:12px; align-items:center; font-size:11px; color:var(--text-secondary);">
-                                <span>#${req.id}</span>
-                                <span>${req.duration_ms || 0} ms</span>
-                            </div>
+                            ${matchHtml}
                         </div>
                     `;
                 });
@@ -2163,6 +2404,26 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             document.getElementById('modalTitle').innerText = `#${req.id} ${req.method} ${req.url}`;
             const modalBody = document.getElementById('modalBody');
 
+            let matches = findMatchLocations(req);
+            let coincidenceBannerHtml = '';
+            if (matches.length > 0) {
+                coincidenceBannerHtml = `
+                    <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 10px; padding: 14px 18px; margin-top: 14px;">
+                        <div style="font-size: 13px; font-weight: 700; color: #fbbf24; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                            <span>🎯 Search Coincidences Found (${matches.length} location${matches.length === 1 ? '' : 's'})</span>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                            ${matches.map(m => `
+                                <div style="font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                    <span class="match-location-badge">🎯 ${escapeHtml(m.label)}</span>
+                                    <span class="match-snippet-text" style="font-family: 'JetBrains Mono', monospace; font-size: 11px;">${m.snippet}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
             let reqBodyStr = formatBodyStr(req.request_body, 'No Request Body');
             let resBodyStr = formatBodyStr(req.response_body, 'No Response Body');
             let curlCmd = generateCurlCommand(req);
@@ -2191,6 +2452,8 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
                         <button class="btn btn-secondary" onclick="downloadResponseBody(${req.id})">💾 Download</button>
                     </div>
                 </div>
+
+                ${coincidenceBannerHtml}
 
                 <div id="replayResultBox" class="hidden"></div>
 
@@ -2307,6 +2570,14 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
             if (req.request_headers) {
                 for (const [k, v] of Object.entries(req.request_headers)) {
                     addModalHeaderRow(k, String(v));
+                }
+            }
+
+            if (currentSearchQuery) {
+                const jsonInput = document.querySelector('.json-search-input');
+                if (jsonInput) {
+                    jsonInput.value = currentSearchQuery;
+                    filterJsonTree(currentSearchQuery, 'resTreeBox');
                 }
             }
 
@@ -2479,11 +2750,40 @@ class CharlesWebHandler(BaseHTTPRequestHandler):
 </html>"""
 
 
-def start_server(port: int = 8000, open_browser: bool = True):
+def start_server(port: int = 8000, open_browser: bool = True, initial_file: str = None):
     """Start local web server on port."""
-    server_address = ("", port)
-    httpd = ThreadingHTTPServer(server_address, CharlesWebHandler)
-    url = f"http://localhost:{port}"
+    global CURRENT_ANALYZER
+    if initial_file:
+        file_path = Path(initial_file)
+        if file_path.exists():
+            try:
+                CURRENT_ANALYZER = CharlesAnalyzer.from_file(file_path)
+                setattr(CURRENT_ANALYZER, "filename", file_path.name)
+                print(f" Loaded initial session: {file_path.name} ({len(CURRENT_ANALYZER.requests)} requests)")
+            except Exception as e:
+                print(f" Warning: Could not preload session file {file_path}: {e}")
+        else:
+            print(f" Warning: Specified file does not exist: {file_path}")
+
+    httpd = None
+    selected_port = port
+    for _ in range(10):
+        try:
+            server_address = ("", selected_port)
+            httpd = ThreadingHTTPServer(server_address, CharlesWebHandler)
+            break
+        except OSError as e:
+            if e.errno == 98 or "Address already in use" in str(e):
+                print(f" Port {selected_port} is busy. Trying port {selected_port + 1}...")
+                selected_port += 1
+            else:
+                raise e
+
+    if not httpd:
+        print(f" Error: Could not bind to port {port} or subsequent ports.")
+        sys.exit(1)
+
+    url = f"http://localhost:{selected_port}"
     print("\n" + "=" * 70)
     print(f" 🌐 CHARLES PROXY WEB ANALYZER RUNNING AT: {url}")
     print("=" * 70)
@@ -2503,13 +2803,24 @@ def start_server(port: int = 8000, open_browser: bool = True):
 
 
 def main():
-    port = 8000
-    if len(sys.argv) > 1:
-        try:
-            port = int(sys.argv[1])
-        except ValueError:
-            pass
-    start_server(port=port, open_browser=True)
+    import argparse
+    parser = argparse.ArgumentParser(description="Charles Proxy Analyzer Web Server")
+    parser.add_argument("file_or_port", nargs="?", default=None, help="Initial file (.chlz, .chls, .har) or Port number")
+    parser.add_argument("-p", "--port", type=int, default=None, help="Port for web server (default: 8000)")
+    parser.add_argument("-f", "--file", type=str, default=None, help="Initial session file (.chlz, .chls, .har)")
+    parser.add_argument("--no-browser", action="store_true", help="Do not automatically open web browser")
+    args, _ = parser.parse_known_args()
+
+    port = args.port or 8000
+    initial_file = args.file
+
+    if args.file_or_port:
+        if args.file_or_port.isdigit():
+            port = int(args.file_or_port)
+        elif not initial_file:
+            initial_file = args.file_or_port
+
+    start_server(port=port, open_browser=not args.no_browser, initial_file=initial_file)
 
 
 if __name__ == "__main__":
